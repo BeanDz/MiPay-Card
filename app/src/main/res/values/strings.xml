@@ -12,7 +12,6 @@
     <string name="card_kind_eid">电子证件</string>
     <string name="card_kind_currency">数字人民币</string>
     <string name="card_kind_car_key">车钥匙</string>
-    <string name="card_kind_other">其他卡片</string>
     <string name="card_image_unavailable">暂无卡面预览</string>
     <string name="card_scope_swipe">更换刷卡页卡面</string>
     <string name="restore">恢复原图</string>

@@ -74,7 +74,6 @@ private val cardKindLabels =
         CardKind.Eid to R.string.card_kind_eid,
         CardKind.Currency to R.string.card_kind_currency,
         CardKind.CarKey to R.string.card_kind_car_key,
-        CardKind.Other to R.string.card_kind_other,
     )
 
 @Composable

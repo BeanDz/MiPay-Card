@@ -13,7 +13,7 @@ internal data class WalletRecord(
     val value: String,
 )
 
-internal enum class CardKind { Transit, Bank, QrBank, Door, Eid, Currency, CarKey, Other }
+internal enum class CardKind { Transit, Bank, QrBank, Door, Eid, Currency, CarKey }
 
 internal sealed interface CardArt {
     data class Online(
@@ -171,10 +171,6 @@ private fun parseWalletCard(
                 CardKind.CarKey -> {
                     val source = if (type == "TRADITIONALCARKEYCARD") json else json.optJSONObject("product")
                     onlineArt(source?.let { optionalString(it, "cardArt") }.orEmpty())
-                }
-
-                CardKind.Other -> {
-                    CardArt.Unknown
                 }
             }
         return WalletCardInfo(cardId(type, cardIdentifier(json, kind) ?: aid), name, kind, art)

@@ -112,17 +112,17 @@ internal class RootWalletFiles(
             try {
                 cached.close()
             } catch (error: IOException) {
-                throw RootAccessException("无法重试 root 授权，请重新打开应用", error)
+                throw IOException("无法重试 root 授权，请重新打开应用", error)
             }
         }
         val shell =
             try {
                 Shell.getShell()
             } catch (error: NoShellException) {
-                throw RootAccessException("无法启动 root shell，请检查 su 授权", error)
+                throw IOException("无法启动 root shell，请检查 su 授权", error)
             }
         if (!shell.isRoot) {
-            throw RootAccessException("应用未获得 root 权限，请在 root 管理器中授权；ADB root 无法替代应用 su 授权")
+            throw IOException("应用未获得 root 权限，请在 root 管理器中授权；ADB root 无法替代应用 su 授权")
         }
         val output = mutableListOf<String>()
         val result =
@@ -165,8 +165,3 @@ internal class RootWalletFiles(
         }
     }
 }
-
-internal class RootAccessException(
-    message: String,
-    cause: Throwable? = null,
-) : IOException(message, cause)

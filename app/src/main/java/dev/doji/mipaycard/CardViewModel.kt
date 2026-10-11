@@ -73,7 +73,12 @@ internal class CardViewModel(
         val replacement = state.value.replacement ?: return
         launchOperation(CardTask.Applying) {
             repository.replace(replacement.cardId, replacement.image, replacement.bitmap)
-            mutableState.update { it.copy(replacement = null, message = text(R.string.replacement_success)) }
+            mutableState.update {
+                it.copy(
+                    replacement = null,
+                    message = getApplication<Application>().getString(R.string.replacement_success),
+                )
+            }
             loadCards()
         }
     }
@@ -83,7 +88,7 @@ internal class CardViewModel(
         val face = card.face as? CardFace.Editable ?: return
         launchOperation(CardTask.Restoring) {
             repository.restore(cardId, face.image)
-            mutableState.update { it.copy(message = text(R.string.restore_success)) }
+            mutableState.update { it.copy(message = getApplication<Application>().getString(R.string.restore_success)) }
             loadCards()
         }
     }
@@ -128,10 +133,8 @@ internal class CardViewModel(
     private fun reportError(error: Exception) {
         mutableState.update {
             it.copy(
-                error = error.message ?: text(R.string.operation_failed),
+                error = error.message ?: getApplication<Application>().getString(R.string.operation_failed),
             )
         }
     }
-
-    private fun text(resource: Int): String = getApplication<Application>().getString(resource)
 }

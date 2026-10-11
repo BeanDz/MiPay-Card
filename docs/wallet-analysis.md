@@ -371,10 +371,11 @@ Each component owns one confirmed boundary:
 | Wallet profile | Verified version and runtime resource values |
 | Root cache access | Root commands, canonical paths, temporary copies, and one-job write verification and rollback |
 | Image processing | Bounded decoding, full original alpha mask, crop, and PNG output |
-| Wallet repository | Serialize scans and mutations, revalidate eligibility, and preserve the first original |
+| Wallet repository | Run cache work off the UI thread, revalidate eligibility, and preserve calibration and the first original |
 | ViewModel and Compose screen | Explicit operation state, preview selection, and Chinese user messages |
 
-The repository owns mutation authorization under one mutex.
+One ViewModel owns the repository. Its operation state accepts one task at a time before launching IO work.
+The repository revalidates mutation authorization during that task.
 Before mutation, it reads fresh provider metadata and validates the selected source, key, dimensions, and content fingerprint.
 It rejects shared sources, ambiguous identities, unsupported versions, native art, animation, and unproven targets.
 
@@ -429,3 +430,56 @@ No fingerprint authentication, payment, card issuance, or private wallet-image m
 The Gradle configuration emits a deprecation warning for `Configuration.setVisible(boolean)` before application tasks run.
 The pinned build still succeeds. The rebuild does not patch or replace the build plugins to suppress this warning.
 `alint` was unavailable, so its separate check did not run.
+
+## Ablation study
+
+The baseline is commit `940130e`. It passed all 47 JVM tests and Android Lint before the experiments.
+Accepted deletions ran in four successive groups. Each group passed `mise run format` and `mise run check`.
+The focused negative experiments changed one protection at a time, then restored it.
+Only the accepted changes reached the installed APK. No private wallet image was replaced or restored.
+
+| Experiment | Change | Observation | Decision |
+| --- | --- | --- | --- |
+| Unused scaffolding | Remove Compose preview dependencies, the unused instrumentation runner, and unreachable `CardKind.Other` | 47 tests pass; six tooling module coordinates disappear | Keep deletion |
+| Forwarding types and helper | Replace `RootAccessException` with its already-handled `IOException`; inline the string lookup helper | 47 tests pass; Chinese error and success messages remain | Keep deletion |
+| Duplicate serialization | Remove the repository mutex and its lock blocks | 47 tests pass; the single ViewModel still rejects overlapping operations before launching work | Keep deletion |
+| Separate calibration owner | Move private preference reads and commits into the repository; delete `WalletDensityStore` | 47 tests pass; device restart retains bank calibration | Keep deletion |
+| No density retention | Return no saved density when wallet activities are missing | 2 of 12 density tests fail: wallet stop and editor restart | Restore retention |
+| No invalid-state distinction | Reuse saved density for invalid wallet configuration | 1 of 12 density tests fails: conflicting or invalid evidence must discard calibration | Restore distinction |
+| No stale-content check | Remove both content comparisons before the root write | 1 of 10 transaction tests fails: same-size changed content is overwritten | Restore comparisons |
+
+The transaction experiment used temporary synthetic files and a stub wallet-stop command.
+The negative density experiments used synthetic activity output. They did not change device display settings.
+After restoring all required protections, the full suite again passed 47 tests. Android Lint reported no issues.
+
+### Why these deletions fit
+
+The repository has one caller: `CardViewModel`. Its task changes synchronously from `Idle` before `viewModelScope.launch`.
+The task returns to `Idle` after work and cleanup. The repository retains its non-cancellable write transaction.
+The mutex duplicated this existing operation gate; it did not coordinate separate repository instances.
+[Android documents cancellation of ViewModel-scoped coroutines](https://developer.android.com/topic/libraries/architecture/coroutines#viewmodelscope).
+The transaction still prevents that cancellation from separating write, rollback, and cleanup.
+
+The calibration class had one owner and one method. Its private storage logic now sits beside the scan that needs it.
+Synchronous persistence, signature checks, and the pure reconciliation function remain unchanged.
+`RootAccessException` had no dedicated handler. `IOException` follows the same existing UI error path.
+Unknown issued provider families still use the verified transit fallback, so they never produce `CardKind.Other`.
+
+The project has no `@Preview` functions or `src/androidTest` tests.
+[Compose previews](https://developer.android.com/develop/ui/compose/tooling/previews) and [instrumented tests](https://developer.android.com/training/testing/instrumented-tests) describe the removed tooling's purposes.
+The JVM test dependencies, lifecycle state, image-processing boundary, and root transaction boundary remain in use.
+Plain-model previews also remain: they show unavailable art without granting permission to edit its cache.
+
+### Measurements and device checks
+
+The debug runtime dependency report changed from 105 to 99 unique `group:module` coordinates, including platform entries.
+The removed coordinates are the tooling, tooling-data, and tooling-preview modules, with their Android variants.
+The debug APK changed from 30,255,809 to 29,766,421 bytes, a reduction of 489,388 bytes, or about 1.6 percent.
+These are dependency and package-size measurements. They do not establish a runtime speed improvement.
+
+The installed version read two cards with two enabled replacement controls after stopping the wallet and restarting the editor.
+No wallet activity supplied a new density during this check. Repeated refresh taps retained the same available cards.
+During startup scanning, the refresh control was disabled.
+The bank's backup overflow control remained available. The check did not execute restore.
+The JVM suite does not exercise Android bitmap decoding or the full photo-picker/apply flow.
+Those limits remain unchanged by the ablation study.
