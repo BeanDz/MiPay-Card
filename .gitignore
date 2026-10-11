@@ -1,0 +1,7 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+artifacts/
+.DS_Store
+.alint/cache/

@@ -1,0 +1,17 @@
+name: Android checks
+on: [push, pull_request]
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: android-actions/setup-android@v3
+            - uses: jdx/mise-action@v3
+            - run: mise run setup
+            - run: mise run check
+            - run: mise run build
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: mipay-card-debug
+                  path: app/build/outputs/apk/debug/app-debug.apk

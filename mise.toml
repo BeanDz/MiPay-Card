@@ -1,0 +1,27 @@
+[tools]
+java = "temurin-17.0.20+8"
+ktlint = "1.8.0"
+
+[tasks.setup]
+description = "Configure the Android SDK"
+run = "zsh scripts/setup.zsh"
+
+[tasks.build]
+description = "Build the debug APK"
+run = "./gradlew :app:assembleDebug --console=plain"
+
+[tasks.install]
+description = "Install the debug APK on a connected device"
+run = "./gradlew :app:installDebug --console=plain"
+
+[tasks.format]
+description = "Format Kotlin source files"
+run = "ktlint --format 'app/src/**/*.kt' '*.gradle.kts' 'app/*.gradle.kts'"
+
+[tasks.check]
+description = "Run formatting, Android Lint, and unit tests"
+run = ["ktlint 'app/src/**/*.kt' '*.gradle.kts' 'app/*.gradle.kts'", "./gradlew :app:lintDebug :app:testDebugUnitTest --console=plain"]
+
+[tasks.alint]
+description = "Run repository hygiene checks (requires installed alint 0.18.0)"
+run = "alint check"
