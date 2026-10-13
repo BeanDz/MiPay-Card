@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,7 +22,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -41,6 +41,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -115,59 +116,48 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
-                actions = {
-                    TextButton(onClick = model::refresh, enabled = !busy) {
-                        Text(stringResource(R.string.refresh))
-                    }
-                },
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { insets ->
         Column(Modifier.padding(insets)) {
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+            if (busy && state.task != CardTask.Scanning) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            PullToRefreshBox(
+                isRefreshing = state.task == CardTask.Scanning,
+                onRefresh = model::refresh,
+                modifier = Modifier.fillMaxSize(),
             ) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(R.string.screen_description), style = MaterialTheme.typography.bodyMedium)
-                        if (state.hasLoaded) {
-                            Text(
-                                stringResource(R.string.card_counts, state.cards.size, state.cards.count { it.face is CardFace.Editable }),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        if (busy) {
-                            Text(stringResource(taskLabels.getValue(state.task)), style = MaterialTheme.typography.labelMedium)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    if (state.cards.isEmpty() && state.hasLoaded && !busy) {
+                        item {
+                            EmptyCards(onRefresh = model::refresh)
                         }
                     }
-                }
-                if (state.cards.isEmpty() && state.hasLoaded && !busy) {
-                    item {
-                        EmptyCards(onRefresh = model::refresh)
-                    }
-                }
-                if (!state.hasLoaded && !busy) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(stringResource(R.string.load_required))
-                            FilledTonalButton(onClick = model::refresh) { Text(stringResource(R.string.retry)) }
+                    if (!state.hasLoaded && !busy) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(stringResource(R.string.load_required))
+                                FilledTonalButton(onClick = model::refresh) { Text(stringResource(R.string.retry)) }
+                            }
                         }
                     }
-                }
-                items(state.cards, key = { card -> card.id }) { card ->
-                    CardItem(
-                        card = card,
-                        enabled = !busy,
-                        onChange = {
-                            editingKey = card.id
-                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        onRestore = { restoreKey = card.id },
-                    )
+                    items(state.cards, key = { card -> card.id }) { card ->
+                        CardItem(
+                            card = card,
+                            enabled = !busy,
+                            onChange = {
+                                editingKey = card.id
+                                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            },
+                            onRestore = { restoreKey = card.id },
+                        )
+                    }
                 }
             }
         }
@@ -178,15 +168,13 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
             onDismissRequest = model::dismissPreview,
             title = { Text(stringResource(R.string.preview_title)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(replacement.cardName, style = MaterialTheme.typography.titleMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Image(
                         replacement.bitmap.asImageBitmap(),
                         contentDescription = stringResource(R.string.card_preview),
                         modifier = Modifier.fillMaxWidth().aspectRatio(replacement.image.width.toFloat() / replacement.image.height),
                         contentScale = ContentScale.Fit,
                     )
-                    Text(stringResource(R.string.preview_description))
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             },
@@ -206,7 +194,6 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
         AlertDialog(
             onDismissRequest = { restoreKey = null },
             title = { Text(stringResource(R.string.restore_title)) },
-            text = { Text(stringResource(R.string.restore_description)) },
             confirmButton = {
                 TextButton(onClick = {
                     restoreKey = null
@@ -234,14 +221,6 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     }
 }
 
-private val taskLabels =
-    mapOf(
-        CardTask.Scanning to R.string.task_scanning,
-        CardTask.Preparing to R.string.task_preparing,
-        CardTask.Applying to R.string.task_applying,
-        CardTask.Restoring to R.string.task_restoring,
-    )
-
 @Composable
 private fun CardItem(
     card: WalletCard,
@@ -262,18 +241,15 @@ private fun CardItem(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(card.name, style = MaterialTheme.typography.titleMedium)
-                Text(kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(card.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
             if (editable?.hasBackup == true) {
                 Box {
                     IconButton(
@@ -305,7 +281,7 @@ private fun CardItem(
                 .padding(horizontal = 12.dp)
                 .fillMaxWidth()
                 .aspectRatio(preview?.let { it.width.toFloat() / it.height } ?: (960f / 606f))
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(14.dp))
         if (preview != null) {
             Image(
                 preview.asImageBitmap(),
@@ -321,23 +297,28 @@ private fun CardItem(
                 Text(stringResource(R.string.card_image_unavailable), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        Text(
-            text =
-                when (val face = card.face) {
-                    is CardFace.Editable -> stringResource(R.string.card_scope_swipe)
-                    is CardFace.Unavailable -> face.reason
-                },
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.End) {
-            Button(
-                onClick = onChange,
-                enabled = enabled && editable != null,
-                contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp),
-            ) {
-                Text(stringResource(R.string.change))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    kindLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (card.face is CardFace.Unavailable) {
+                    Text(
+                        card.face.reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (editable != null) {
+                TextButton(onClick = onChange, enabled = enabled) {
+                    Text(stringResource(R.string.change))
+                }
             }
         }
     }

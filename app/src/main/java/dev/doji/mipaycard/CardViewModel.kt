@@ -25,7 +25,6 @@ internal enum class CardTask {
 
 internal data class ReplacementPreview(
     val cardId: String,
-    val cardName: String,
     val image: CachedImage,
     val bitmap: Bitmap,
 )
@@ -64,7 +63,7 @@ internal class CardViewModel(
         launchOperation(CardTask.Preparing) {
             val bitmap = repository.prepareReplacement(face.image, uri)
             mutableState.update {
-                it.copy(replacement = ReplacementPreview(card.id, card.name, face.image, bitmap))
+                it.copy(replacement = ReplacementPreview(card.id, face.image, bitmap))
             }
         }
     }

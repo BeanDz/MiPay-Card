@@ -244,13 +244,29 @@ private fun cardName(
     type: String,
     json: JSONObject,
     kind: CardKind,
-): String =
+): String = displayName(type, kind) { key -> optionalString(json, key) }
+
+private fun displayName(
+    type: String,
+    kind: CardKind,
+    field: (String) -> String,
+): String {
+    if (kind == CardKind.Bank || kind == CardKind.QrBank) {
+        val specificNames = listOf(field("bank_name"), field("bank_card_product_name")).filter(String::isNotBlank).distinct()
+        return specificNames.joinToString(" · ").ifBlank { field("title") }
+    }
+    return firstString(cardNameFields(type, kind), field)
+}
+
+private fun cardNameFields(
+    type: String,
+    kind: CardKind,
+): List<String> =
     when {
-        type == "ICCOADIGITALKEY" -> firstString(json, "customName", "friendlyName", "title")
-        kind == CardKind.CarKey -> firstString(json, "name", "title")
-        kind == CardKind.Bank || kind == CardKind.QrBank -> firstString(json, "title", "bank_card_product_name", "bank_name")
-        kind == CardKind.Door -> firstString(json, "title", "door_card_product_name")
-        else -> firstString(json, "title", "cardName")
+        type == "ICCOADIGITALKEY" -> listOf("customName", "friendlyName", "title")
+        kind == CardKind.CarKey -> listOf("name", "title")
+        kind == CardKind.Door -> listOf("door_card_product_name", "title")
+        else -> listOf("title", "cardName")
     }
 
 private fun malformedCard(
@@ -261,8 +277,9 @@ private fun malformedCard(
     problem: String = "卡片记录格式不受支持，暂时无法修改",
 ): WalletCardInfo {
     val name =
-        listOf("customName", "friendlyName", "title", "bank_card_product_name", "door_card_product_name", "name")
-            .firstNotNullOfOrNull { key -> (json?.opt(key) as? String)?.takeIf { it.isNotBlank() } }
+        json
+            ?.let { value -> displayName(type, kind) { key -> value.opt(key) as? String ?: "" } }
+            ?.takeIf { it.isNotBlank() }
     return WalletCardInfo(cardId(type, cardIdentifier(json, kind) ?: serialized), name ?: "无法识别的卡片", kind, CardArt.Unknown, problem)
 }
 
@@ -287,11 +304,11 @@ private fun cardId(
     MessageDigest.getInstance("SHA-256").digest("$type\u0000$identifier".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
 private fun firstString(
-    json: JSONObject,
-    vararg keys: String,
+    keys: List<String>,
+    field: (String) -> String,
 ): String {
     for (key in keys) {
-        val value = optionalString(json, key)
+        val value = field(key)
         if (value.isNotBlank()) return value
     }
     return ""

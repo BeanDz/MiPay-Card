@@ -11,6 +11,29 @@ import org.junit.Test
 
 class WalletCardParserTest {
     @Test
+    fun buildsCardSpecificNamesBeforeGenericTitles() {
+        val cards =
+            parseWalletCards(
+                listOf(
+                    WalletRecord(
+                        "BANKCARD",
+                        """{"title":"Mi Pay","bank_card_product_name":"Example Debit Card","bank_name":"Example Bank","aid":"bank"}""",
+                    ),
+                    WalletRecord(
+                        "QRBANKCARD",
+                        """{"title":"Mi Pay","bank_name":"Example QR Bank","aid":"qr"}""",
+                    ),
+                    WalletRecord(
+                        "MIFARE_ENTRANCE",
+                        """{"title":"Door Card","door_card_product_name":"Office Pass","aid":"door"}""",
+                    ),
+                ),
+            )
+
+        assertEquals(listOf("Example Bank · Example Debit Card", "Example QR Bank", "Office Pass"), cards.map { it.name })
+    }
+
+    @Test
     fun keepsBankInstancesWithSharedArtAndLockedStatus() {
         val record =
             WalletRecord(

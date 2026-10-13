@@ -93,6 +93,13 @@ A card instance, an image source, and a displayed row are separate identities.
 Bank reference IDs and door UID/CID fields identify instances more precisely than a shared product AID.
 The editor hashes identity fields and does not retain card numbers or balances in its public model.
 
+Displayed names follow the metadata fields for each entity family.
+Bank and QR-bank cards combine `bank_name` and `bank_card_product_name`, omitting missing or duplicate parts.
+They use the generic `title` only when both specific fields are missing.
+This rule is necessary because a bank record can use `Mi Pay` as its generic title while its specific fields name the bank and card product.
+Door cards prefer `door_card_product_name`; ICCOA keys prefer `customName`, then `friendlyName`.
+Other car keys use `name`, while the remaining families use their card title.
+
 Duplicate identities cannot safely authorize independent writes.
 Each duplicate row must have a unique display key, retain its own image source, and show an ambiguity reason.
 The editor must not store card sources in a map that silently replaces duplicate IDs.
