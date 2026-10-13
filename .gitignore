@@ -1,7 +1,15 @@
 .gradle/
+.idea/
 .kotlin/
+.lody/
 **/build/
 local.properties
 artifacts/
+*.aab
+*.apk
+*.iml
+*.jks
+*.keystore
+keystore.properties
 .DS_Store
 .alint/cache/

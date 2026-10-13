@@ -472,7 +472,7 @@ Those required root phases total 1,117 ms.
 An actual replacement additionally encodes the prepared PNG and validates or creates its first backup; an actual restore decodes the local backup.
 
 The final optimized debug APK cold-started its activity in 251–257 ms across two runs on the connected device; card scanning continued asynchronously after that measurement.
-The completed scan and a manual refresh both showed two cards with two editable targets, with no application error in logcat.
+The completed scan and a pull-to-refresh scan both showed two cards with two editable targets, with no application error in logcat.
 The device check did not apply or restore a private card image, so real mutation latency remains unmeasured.
 
 ## Verification scope
@@ -575,8 +575,8 @@ The debug APK changed from 30,255,809 to 29,766,421 bytes, a reduction of 489,38
 These are dependency and package-size measurements. They do not establish a runtime speed improvement.
 
 The installed version read two cards with two enabled replacement controls after stopping the wallet and restarting the editor.
-No wallet activity supplied a new density during this check. Repeated refresh taps retained the same available cards.
-During startup scanning, the refresh control was disabled.
+No wallet activity supplied a new density during this check. Repeated pull-to-refresh scans retained the same available cards.
+The operation gate rejected overlapping scans and mutations.
 The bank's backup overflow control remained available. The check did not execute restore.
 The JVM suite does not exercise Android bitmap decoding or the full photo-picker/apply flow.
 Those limits remain unchanged by the ablation study.
