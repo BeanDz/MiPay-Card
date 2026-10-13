@@ -14,7 +14,7 @@ import java.io.IOException
 
 internal const val WALLET_PACKAGE = "com.miui.tsmclient"
 
-/** The external resource contract belongs to the APK documented in docs/wallet-analysis.md. */
+/** The external resource contract is pinned to the verified wallet version below. */
 internal data class WalletProfile(
     val dataDirectory: String,
     val bankWidth: Int,

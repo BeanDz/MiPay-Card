@@ -1,7 +1,6 @@
 # Repository instructions
 
-Read [README.md](README.md) for setup, device requirements, and app behavior.
-Read [docs/wallet-analysis.md](docs/wallet-analysis.md) before changes to wallet models, image sources, or cache writes.
+Read [README.md](README.md) for the project scope.
 
 - Keep the app small: Kotlin, Compose Material 3, and libsu.
 - Keep user-facing text in Chinese. Write repository documentation in English.

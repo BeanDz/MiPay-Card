@@ -13,7 +13,7 @@ rules:
     paths: README.md
     root_only: true
     level: error
-    message: Keep setup instructions available.
+    message: Keep the project summary available.
 
   - id: project-agent-instructions
     kind: file_exists

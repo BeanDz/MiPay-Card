@@ -104,31 +104,13 @@ internal class WalletRepository(
         val sharedSources = sharedImageSources(sources)
         return cards.mapIndexed { index, card ->
             currentCoroutineContext().ensureActive()
+            val source = sources[index]
+            val problem = card.problem ?: unsupportedArtReason(card.art, source, profile.bankWidth)
             val face =
-                when {
-                    card.problem != null -> {
-                        CardFace.Unavailable(card.problem)
-                    }
-
-                    card.art == CardArt.Native -> {
-                        CardFace.Unavailable("刷卡页使用内置卡面，暂不支持更换")
-                    }
-
-                    card.art == CardArt.Animated -> {
-                        CardFace.Unavailable("刷卡页使用动态卡面，暂不支持更换")
-                    }
-
-                    card.art is CardArt.BankIdentifier && profile.bankWidth == 0 -> {
-                        CardFace.Unavailable("尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新")
-                    }
-
-                    sources[index] == null -> {
-                        CardFace.Unavailable("未找到刷卡页的在线卡面地址")
-                    }
-
-                    else -> {
-                        resolveFace(files, sources[index]!!, keys, sharedSources)
-                    }
+                if (problem == null) {
+                    resolveFace(files, source!!, keys, sharedSources)
+                } else {
+                    CardFace.Unavailable(problem)
                 }
             WalletCard(card.id, card.name, card.kind, face)
         }
@@ -265,28 +247,7 @@ internal class WalletRepository(
         }
         val sources = cards.map { swipeImageUrl(it.art, profile.bankWidth, profile.bankHeight) }
         val source = sources[cardIndex]
-        val problem =
-            when {
-                card.art == CardArt.Native -> {
-                    "刷卡页使用内置卡面，暂不支持更换"
-                }
-
-                card.art == CardArt.Animated -> {
-                    "刷卡页使用动态卡面，暂不支持更换"
-                }
-
-                card.art is CardArt.BankIdentifier && profile.bankWidth == 0 -> {
-                    "尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新"
-                }
-
-                source == null -> {
-                    "未找到刷卡页的在线卡面地址"
-                }
-
-                else -> {
-                    null
-                }
-            }
+        val problem = unsupportedArtReason(card.art, source, profile.bankWidth)
         if (problem != null) throw IOException(problem)
         val sourceIdentity = walletImageSourceIdentity(source!!, ImageModel.CustomUrl)
         if (sourceIdentity in sharedImageSources(sources)) {
@@ -362,6 +323,19 @@ private fun sharedImageSources(sources: List<String?>): Set<String> =
         .eachCount()
         .filterValues { it > 1 }
         .keys
+
+private fun unsupportedArtReason(
+    art: CardArt,
+    source: String?,
+    bankWidth: Int,
+): String? =
+    when {
+        art == CardArt.Native -> "刷卡页使用内置卡面，暂不支持更换"
+        art == CardArt.Animated -> "刷卡页使用动态卡面，暂不支持更换"
+        art is CardArt.BankIdentifier && bankWidth == 0 -> "尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新"
+        source == null -> "未找到刷卡页的在线卡面地址"
+        else -> null
+    }
 
 internal fun swipeImageUrl(
     art: CardArt,

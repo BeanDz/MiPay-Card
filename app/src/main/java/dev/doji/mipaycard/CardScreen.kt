@@ -199,7 +199,7 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
                     restoreKey = null
                     model.restore(key)
                 }, enabled = !busy) {
-                    Text(stringResource(R.string.restore_confirm))
+                    Text(stringResource(R.string.restore))
                 }
             },
             dismissButton = {
