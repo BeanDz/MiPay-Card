@@ -7,7 +7,7 @@ Read [docs/wallet-analysis.md](docs/wallet-analysis.md) before changes to wallet
 - Keep user-facing text in Chinese. Write repository documentation in English.
 - Use the pinned tools and tasks in [mise.toml](mise.toml).
 - Run `mise run check` after meaningful code changes.
-- Run `mise run alint` when alint 0.18.0 is available. Its installation is pending approval.
+- Run `mise run alint` after repository-structure or documentation changes.
 - Run `mise run format` to format Kotlin source.
 - Read wallet-provider metadata to enumerate visible swiping cards. Keep cards with unavailable images visible.
 - Match each card type's actual image model and source to cache entries. Do not infer identities from cache filenames.

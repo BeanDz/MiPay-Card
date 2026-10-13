@@ -168,9 +168,24 @@ class CacheWriteScriptTest {
     }
 
     @Test
+    fun checksOnlyRequestedSafeCacheKeys() {
+        val missing = "b".repeat(64)
+        val unrelated = "c".repeat(64)
+        File(cache, "$unrelated.0").writeText("unrelated")
+        val linked = "d".repeat(64)
+        val linkedTarget = File(cache, "$linked.0").apply { writeText("linked") }
+        Files.createLink(temporary.newFile("linked-alias").apply { delete() }.toPath(), linkedTarget.toPath())
+
+        val (exitCode, output) = execute(cacheCandidateKeysScript(wallet.path, setOf(key, missing, linked)))
+
+        assertEquals(0, exitCode)
+        assertEquals("$key\n", output)
+    }
+
+    @Test
     fun rejectsPathTraversalKeyBeforeBuildingTheJob() {
         assertThrows(IllegalArgumentException::class.java) {
-            CacheWriteScript.write(wallet.path, "../$key", replacement.path, previous.path)
+            cacheWriteScript(wallet.path, "../$key", replacement.path, previous.path)
         }
         assertEquals("old-face", target.readText())
     }
@@ -179,13 +194,13 @@ class CacheWriteScriptTest {
         executable(
             "cat",
             """
-            if test "${'$'}1" = ${CacheWriteScript.quote(replacement.canonicalPath)}; then
+            if test "${'$'}1" = ${quoteShell(replacement.canonicalPath)}; then
                 printf broken
                 exit 1
             fi
-            if test ${CacheWriteScript.quote(
+            if test ${quoteShell(
                 rollback.toString(),
-            )} = true && test "${'$'}1" = ${CacheWriteScript.quote(previous.canonicalPath)}; then
+            )} = true && test "${'$'}1" = ${quoteShell(previous.canonicalPath)}; then
                 printf broken
                 exit 1
             fi
@@ -205,11 +220,18 @@ class CacheWriteScriptTest {
     }
 
     private fun execute(): Int {
+        val (exitCode, diagnostics) =
+            execute(cacheWriteScript(wallet.path, key, replacement.path, previous.path))
+        assertEquals("Unexpected shell diagnostics: $diagnostics", "", diagnostics)
+        return exitCode
+    }
+
+    private fun execute(script: String): Pair<Int, String> {
         val builder =
             ProcessBuilder(
                 "/bin/sh",
                 "-c",
-                CacheWriteScript.write(wallet.path, key, replacement.path, previous.path),
+                script,
             ).redirectErrorStream(true)
         builder.environment().apply {
             this["PATH"] = "${bin.path}:${this["PATH"]}"
@@ -219,8 +241,7 @@ class CacheWriteScriptTest {
         try {
             assertTrue("Root transaction did not finish", process.waitFor(10, TimeUnit.SECONDS))
             val diagnostics = process.inputStream.bufferedReader().use { it.readText() }
-            assertEquals("Unexpected shell diagnostics: $diagnostics", "", diagnostics)
-            return process.exitValue()
+            return process.exitValue() to diagnostics
         } finally {
             if (process.isAlive) process.destroyForcibly()
             process.inputStream.close()

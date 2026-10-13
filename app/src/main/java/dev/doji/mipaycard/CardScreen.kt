@@ -158,15 +158,15 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
                         }
                     }
                 }
-                items(state.cards, key = { card -> card.info.id }) { card ->
+                items(state.cards, key = { card -> card.id }) { card ->
                     CardItem(
                         card = card,
                         enabled = !busy,
                         onChange = {
-                            editingKey = card.info.id
+                            editingKey = card.id
                             photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
-                        onRestore = { restoreKey = card.info.id },
+                        onRestore = { restoreKey = card.id },
                     )
                 }
             }
@@ -250,8 +250,8 @@ private fun CardItem(
     onRestore: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val moreDescription = stringResource(R.string.card_more, card.info.name)
-    val kindLabel = stringResource(cardKindLabels.getValue(card.info.kind))
+    val moreDescription = stringResource(R.string.card_more, card.name)
+    val kindLabel = stringResource(cardKindLabels.getValue(card.kind))
     val editable = card.face as? CardFace.Editable
     val preview =
         when (val face = card.face) {
@@ -271,7 +271,7 @@ private fun CardItem(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(card.info.name, style = MaterialTheme.typography.titleMedium)
+                Text(card.name, style = MaterialTheme.typography.titleMedium)
                 Text(kindLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (editable?.hasBackup == true) {
@@ -309,7 +309,7 @@ private fun CardItem(
         if (preview != null) {
             Image(
                 preview.asImageBitmap(),
-                contentDescription = card.info.name,
+                contentDescription = card.name,
                 modifier = imageModifier,
                 contentScale = ContentScale.Fit,
             )

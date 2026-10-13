@@ -8,7 +8,7 @@ class WalletImageKeysTest {
     // Independent digest fixtures use Glide's original-size RESOURCE and DATA byte sequences.
     @Test
     fun matchesDecodedResourceClassesThenDataWithSignedMd5Source() {
-        val keys = WalletImageKeys.candidates("https://example.com/card.png")
+        val keys = walletImageCandidates("https://example.com/card.png", ImageModel.CustomUrl)
 
         // This URL's MD5 has its high bit set, so unsigned base36 gives the wrong wallet key.
         assertEquals(
@@ -24,29 +24,38 @@ class WalletImageKeysTest {
     @Test
     fun normalizesSignedHttpUrlWithoutChangingEscapedPathOrFragment() {
         val keys =
-            WalletImageKeys.candidates(
+            walletImageCandidates(
                 "http://example.com/cards/blue%20card.png?GalaxyAccessKeyId=token&Expires=10#face",
+                ImageModel.CustomUrl,
             )
 
         assertEquals("adfc75a4fcca85aa119e2283f48a346851eb6ab4fd2bebf83d16fc76da2ff061", keys.first())
         assertEquals(
-            WalletImageKeys.candidates("https://example.com/cards/blue%20card.png#face"),
+            walletImageCandidates("https://example.com/cards/blue%20card.png#face", ImageModel.CustomUrl),
             keys,
         )
     }
 
     @Test
     fun renewedSignaturesKeepTheCustomCacheIdentity() {
-        val original = WalletImageKeys.candidates("https://example.com/card.png?GalaxyAccessKeyId=first&Expires=10&Signature=old")
-        val renewed = WalletImageKeys.candidates("https://example.com/card.png?Expires=20&GalaxyAccessKeyId=second&Signature=new")
+        val original =
+            walletImageCandidates(
+                "https://example.com/card.png?GalaxyAccessKeyId=first&Expires=10&Signature=old",
+                ImageModel.CustomUrl,
+            )
+        val renewed =
+            walletImageCandidates(
+                "https://example.com/card.png?Expires=20&GalaxyAccessKeyId=second&Signature=new",
+                ImageModel.CustomUrl,
+            )
 
-        assertEquals(WalletImageKeys.candidates("https://example.com/card.png"), original)
+        assertEquals(walletImageCandidates("https://example.com/card.png", ImageModel.CustomUrl), original)
         assertEquals(original, renewed)
     }
 
     @Test
     fun preservesOrdinaryQueryParameters() {
-        val keys = WalletImageKeys.candidates("https://example.com/card.png?v=2")
+        val keys = walletImageCandidates("https://example.com/card.png?v=2", ImageModel.CustomUrl)
 
         assertEquals("c90425b0f07fa9b57bdcd5a882edfe408dc7c61e2d49669e2cf0634076f895f6", keys.first())
         assertEquals("2fa37394b60e0c2b9b045e45591aef5f4cfb916a5715c98a62d1b79473b0c87d", keys.last())
@@ -54,7 +63,7 @@ class WalletImageKeysTest {
 
     @Test
     fun matchesAndroidUriEncodedKeyComparison() {
-        val keys = WalletImageKeys.candidates("https://example.com/card.png?%47alaxyAccessKeyId=token")
+        val keys = walletImageCandidates("https://example.com/card.png?%47alaxyAccessKeyId=token", ImageModel.CustomUrl)
 
         assertEquals("bac0f37e34ea7ce14060cd140fdc763f490f1fea96617cd22b8807b208cddffd", keys.first())
     }
@@ -62,9 +71,9 @@ class WalletImageKeysTest {
     @Test
     fun plainUrlUsesHttpsWithoutRemovingSignedQuery() {
         val keys =
-            WalletImageKeys.candidates(
+            walletImageCandidates(
                 "http://example.com/card.png?GalaxyAccessKeyId=token&Expires=10",
-                model = ImageModel.PlainUrl,
+                ImageModel.PlainUrl,
             )
 
         assertEquals(
@@ -80,8 +89,8 @@ class WalletImageKeysTest {
     @Test
     fun sameImageUrlHasSeparateCustomAndPlainCacheIdentities() {
         val url = "https://example.com/card.png"
-        val custom = WalletImageKeys.candidates(url, model = ImageModel.CustomUrl)
-        val plain = WalletImageKeys.candidates(url, model = ImageModel.PlainUrl)
+        val custom = walletImageCandidates(url, ImageModel.CustomUrl)
+        val plain = walletImageCandidates(url, ImageModel.PlainUrl)
 
         assertEquals("5b543902189eb9ca9ca45496dd0b4f5501c73b96281170a590aa939b7e907970", plain.first())
         assertEquals("cf9a2c3f49d2ea6f2942d7d37ac113c828a253f8124121cfd6e8d191ef3e8919", plain.last())
@@ -92,8 +101,9 @@ class WalletImageKeysTest {
     fun bankThumbnailPixelsStayInUrlWhileGlideUsesOriginalSize() {
         // 349dp × 220dp at density 3 is a CDN request size, not Glide's RESOURCE size.
         val keys =
-            WalletImageKeys.candidates(
+            walletImageCandidates(
                 "https://did-cdn.pay.xiaomi.com/mfc/thumbnail/webp/w1047h660q80/synthetic-card-art",
+                ImageModel.CustomUrl,
             )
 
         assertEquals(

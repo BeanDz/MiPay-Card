@@ -59,12 +59,12 @@ internal class CardViewModel(
         cardId: String,
         uri: Uri,
     ) {
-        val card = state.value.cards.find { it.info.id == cardId } ?: return
+        val card = state.value.cards.find { it.id == cardId } ?: return
         val face = card.face as? CardFace.Editable ?: return
         launchOperation(CardTask.Preparing) {
-            val bitmap = repository.prepareReplacement(card.info.id, face.image, uri)
+            val bitmap = repository.prepareReplacement(face.image, uri)
             mutableState.update {
-                it.copy(replacement = ReplacementPreview(card.info.id, card.info.name, face.image, bitmap))
+                it.copy(replacement = ReplacementPreview(card.id, card.name, face.image, bitmap))
             }
         }
     }
@@ -72,24 +72,34 @@ internal class CardViewModel(
     fun applyReplacement() {
         val replacement = state.value.replacement ?: return
         launchOperation(CardTask.Applying) {
-            repository.replace(replacement.cardId, replacement.image, replacement.bitmap)
+            val image = repository.replace(replacement.cardId, replacement.image, replacement.bitmap)
             mutableState.update {
                 it.copy(
+                    cards =
+                        it.cards.map { card ->
+                            if (card.id == replacement.cardId) card.copy(face = CardFace.Editable(image, true)) else card
+                        },
                     replacement = null,
                     message = getApplication<Application>().getString(R.string.replacement_success),
                 )
             }
-            loadCards()
         }
     }
 
     fun restore(cardId: String) {
-        val card = state.value.cards.find { it.info.id == cardId } ?: return
+        val card = state.value.cards.find { it.id == cardId } ?: return
         val face = card.face as? CardFace.Editable ?: return
         launchOperation(CardTask.Restoring) {
-            repository.restore(cardId, face.image)
-            mutableState.update { it.copy(message = getApplication<Application>().getString(R.string.restore_success)) }
-            loadCards()
+            val image = repository.restore(cardId, face.image)
+            mutableState.update {
+                it.copy(
+                    cards =
+                        it.cards.map { current ->
+                            if (current.id == cardId) current.copy(face = CardFace.Editable(image, true)) else current
+                        },
+                    message = getApplication<Application>().getString(R.string.restore_success),
+                )
+            }
         }
     }
 

@@ -19,9 +19,7 @@ internal class WalletRepository(
 ) {
     private val context = context.applicationContext
     private val originals = File(this.context.filesDir, "originals")
-    private val images = CardImages(this.context)
     private val densityPreferences = this.context.getSharedPreferences("wallet-density", Context.MODE_PRIVATE)
-    private val files by lazy { RootWalletFiles(this.context, WalletProfile.read(this.context).dataDirectory) }
 
     suspend fun scan(): List<WalletCard> =
         withContext(Dispatchers.IO) {
@@ -29,18 +27,19 @@ internal class WalletRepository(
         }
 
     suspend fun prepareReplacement(
-        cardId: String,
         expected: CachedImage,
         uri: Uri,
     ): Bitmap =
         withContext(Dispatchers.IO) {
-            currentImage(cardId, expected)
             val original = backupFile(expected.key)
-            if (original.exists()) return@withContext images.prepare(expected, uri, original)
+            if (original.exists()) return@withContext prepareCardImage(context, expected, uri, original)
+            val profile = readWalletProfile(context)
+            if (profile.problem != null) throw IOException(profile.problem)
+            val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
             val current = files.read(expected.key)
             try {
                 requireFingerprint(expected, current)
-                images.prepare(expected, uri, current)
+                prepareCardImage(context, expected, uri, current)
             } finally {
                 Files.deleteIfExists(current.toPath())
             }
@@ -50,60 +49,59 @@ internal class WalletRepository(
         cardId: String,
         expected: CachedImage,
         bitmap: Bitmap,
-    ) = withContext(Dispatchers.IO) {
-        val image = currentImage(cardId, expected)
-        if (bitmap.width != image.width || bitmap.height != image.height) throw IOException("新卡面的尺寸与原卡面不一致")
-        val replacement = File.createTempFile("replacement-", ".png", context.cacheDir)
-        try {
-            images.save(bitmap, replacement)
-            mutate(image, replacement, saveBackup = true)
-        } finally {
-            Files.deleteIfExists(replacement.toPath())
+    ): CachedImage =
+        withContext(Dispatchers.IO) {
+            if (bitmap.width != expected.width || bitmap.height != expected.height) {
+                throw IOException("新卡面的尺寸与原卡面不一致")
+            }
+            val files = validatedFiles(cardId, expected)
+            val replacement = File.createTempFile("replacement-", ".png", context.cacheDir)
+            try {
+                val replacementFingerprint = saveCardImage(bitmap, replacement)
+                mutate(files, expected, replacement, saveBackup = true)
+                CachedImage(expected.key, expected.width, expected.height, replacementFingerprint, bitmap)
+            } finally {
+                Files.deleteIfExists(replacement.toPath())
+            }
         }
-    }
 
     suspend fun restore(
         cardId: String,
         expected: CachedImage,
-    ) = withContext(Dispatchers.IO) {
-        val image = currentImage(cardId, expected)
-        val original = backupFile(image.key)
-        if (!original.isFile) throw IOException("这张卡还没有原始卡面备份")
-        images.validate(original, image.width, image.height)
-        mutate(image, original, saveBackup = false)
-    }
-
-    private suspend fun scanCards(): List<WalletCard> {
-        var profile = WalletProfile.read(context)
-        val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
-        if (cards.isEmpty()) return emptyList()
-        if (profile.problem != null) return cards.map { WalletCard(it, CardFace.Unavailable(profile.problem)) }
-        if (cards.any { it.art is CardArt.BankIdentifier }) {
-            val resolutionOverride = files.displayResolutionOverride()
-            val observation = files.resourceDensity()
-            val currentProfile = WalletProfile.read(context)
-            val stableObservation =
-                if (profile.densitySignature == currentProfile.densitySignature &&
-                    resolutionOverride == files.displayResolutionOverride()
-                ) {
-                    observation
-                } else {
-                    WalletDensityObservation.Invalid
-                }
-            val signature = JSONArray(listOf(currentProfile.densitySignature, resolutionOverride)).toString()
-            val density = resolveDensity(stableObservation, signature)
-            profile = WalletProfile.read(context, density)
+    ): CachedImage =
+        withContext(Dispatchers.IO) {
+            val files = validatedFiles(cardId, expected)
+            val original = backupFile(expected.key)
+            if (!original.isFile) throw IOException("这张卡还没有原始卡面备份")
+            val restored = readCachedImage(expected.key, original)
+            if (restored.width != expected.width || restored.height != expected.height) {
+                throw IOException("卡面尺寸已变化，请刷新后重试")
+            }
+            mutate(files, expected, original, saveBackup = false)
+            restored
         }
 
-        val keys = files.keys()
+    private suspend fun scanCards(): List<WalletCard> {
+        var profile = readWalletProfile(context)
+        val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
+        val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
+        if (cards.isEmpty()) return emptyList()
+        if (profile.problem != null) {
+            return cards.map { WalletCard(it.id, it.name, it.kind, CardFace.Unavailable(profile.problem)) }
+        }
+        if (cards.any { it.art is CardArt.BankIdentifier }) {
+            profile = resolveBankProfile(profile, files)
+        }
+
         val sources = cards.map { card -> swipeImageUrl(card.art, profile.bankWidth, profile.bankHeight) }
-        val sharedSources =
+        val candidates =
             sources
                 .filterNotNull()
-                .groupingBy { WalletImageKeys.sourceIdentity(it) }
-                .eachCount()
-                .filterValues { it > 1 }
-                .keys
+                .flatMap { url ->
+                    walletImageCandidates(url, ImageModel.CustomUrl) + walletImageCandidates(url, ImageModel.PlainUrl)
+                }.toSet()
+        val keys = files.keys(candidates)
+        val sharedSources = sharedImageSources(sources)
         return cards.mapIndexed { index, card ->
             currentCoroutineContext().ensureActive()
             val face =
@@ -129,10 +127,10 @@ internal class WalletRepository(
                     }
 
                     else -> {
-                        resolveFace(sources[index]!!, keys, sharedSources)
+                        resolveFace(files, sources[index]!!, keys, sharedSources)
                     }
                 }
-            WalletCard(card, face)
+            WalletCard(card.id, card.name, card.kind, face)
         }
     }
 
@@ -157,18 +155,49 @@ internal class WalletRepository(
         return current?.densityDpi
     }
 
+    private fun savedDensity(signature: String): Int? {
+        if (densityPreferences.getString("signature", null) != signature) return null
+        return densityPreferences.getInt("density", 0).takeIf { it > 0 }
+    }
+
+    private fun resolveBankProfile(
+        initialProfile: WalletProfile,
+        files: RootWalletFiles,
+    ): WalletProfile {
+        val resolutionOverride = files.displayResolutionOverride()
+        val currentProfile = readWalletProfile(context)
+        val signature = JSONArray(listOf(currentProfile.densitySignature, resolutionOverride)).toString()
+        if (initialProfile.densitySignature == currentProfile.densitySignature) {
+            savedDensity(signature)?.let { return readWalletProfile(context, it) }
+        }
+
+        val observation = files.resourceDensity()
+        val finalProfile = readWalletProfile(context)
+        val stableObservation =
+            if (currentProfile.densitySignature == finalProfile.densitySignature &&
+                resolutionOverride == files.displayResolutionOverride()
+            ) {
+                observation
+            } else {
+                WalletDensityObservation.Invalid
+            }
+        val finalSignature = JSONArray(listOf(finalProfile.densitySignature, resolutionOverride)).toString()
+        return readWalletProfile(context, resolveDensity(stableObservation, finalSignature))
+    }
+
     private fun resolveFace(
+        files: RootWalletFiles,
         url: String,
         keys: Set<String>,
         sharedSources: Set<String>,
     ): CardFace {
-        val shared = WalletImageKeys.sourceIdentity(url) in sharedSources
+        val shared = walletImageSourceIdentity(url, ImageModel.CustomUrl) in sharedSources
         var failure: IOException? = null
-        for (key in WalletImageKeys.candidates(url, ImageModel.CustomUrl)) {
+        for (key in walletImageCandidates(url, ImageModel.CustomUrl)) {
             if (key !in keys) continue
             val image =
                 try {
-                    readImage(key)
+                    readImage(files, key)
                 } catch (error: ImageCacheException) {
                     failure = error
                     continue
@@ -176,7 +205,7 @@ internal class WalletRepository(
             if (shared) return CardFace.Unavailable("多张卡共用这张卡面，暂不支持单独更换", image.preview)
             val original = backupFile(key)
             try {
-                if (original.exists()) images.validate(original, image.width, image.height)
+                if (original.exists()) validateCardImage(original, image.width, image.height)
             } catch (error: IOException) {
                 return CardFace.Unavailable(error.message ?: "原始卡面备份已损坏", image.preview)
             }
@@ -184,10 +213,10 @@ internal class WalletRepository(
         }
 
         var preview: Bitmap? = null
-        for (key in WalletImageKeys.candidates(url, ImageModel.PlainUrl)) {
+        for (key in walletImageCandidates(url, ImageModel.PlainUrl)) {
             if (key !in keys) continue
             try {
-                preview = readImage(key).preview
+                preview = readImage(files, key).preview
                 break
             } catch (error: ImageCacheException) {
                 failure = error
@@ -203,11 +232,14 @@ internal class WalletRepository(
         return CardFace.Unavailable(reason, preview)
     }
 
-    private fun readImage(key: String): CachedImage {
+    private fun readImage(
+        files: RootWalletFiles,
+        key: String,
+    ): CachedImage {
         val current = files.read(key)
         try {
             return try {
-                images.read(key, current)
+                readCachedImage(key, current)
             } catch (error: IOException) {
                 throw ImageCacheException(error.message ?: "无法解码卡面缓存", error)
             }
@@ -216,23 +248,58 @@ internal class WalletRepository(
         }
     }
 
-    private suspend fun currentImage(
+    private fun validatedFiles(
         cardId: String,
         expected: CachedImage,
-    ): CachedImage {
-        val card = scanCards().find { it.info.id == cardId } ?: throw IOException("这张卡已不在刷卡列表中，请刷新后重试")
-        val face = card.face
-        if (face is CardFace.Unavailable) throw IOException(face.reason)
-        val image = (face as CardFace.Editable).image
-        if (image.key != expected.key || image.fingerprint != expected.fingerprint || image.width != expected.width ||
-            image.height != expected.height
-        ) {
+    ): RootWalletFiles {
+        var profile = readWalletProfile(context)
+        if (profile.problem != null) throw IOException(profile.problem)
+        val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
+        val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
+        val cardIndex = cards.indexOfFirst { it.id == cardId }
+        if (cardIndex < 0) throw IOException("这张卡已不在刷卡列表中，请刷新后重试")
+        val card = cards[cardIndex]
+        if (card.problem != null) throw IOException(card.problem)
+        if (cards.any { it.art is CardArt.BankIdentifier }) {
+            profile = resolveBankProfile(profile, files)
+        }
+        val sources = cards.map { swipeImageUrl(it.art, profile.bankWidth, profile.bankHeight) }
+        val source = sources[cardIndex]
+        val problem =
+            when {
+                card.art == CardArt.Native -> {
+                    "刷卡页使用内置卡面，暂不支持更换"
+                }
+
+                card.art == CardArt.Animated -> {
+                    "刷卡页使用动态卡面，暂不支持更换"
+                }
+
+                card.art is CardArt.BankIdentifier && profile.bankWidth == 0 -> {
+                    "尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新"
+                }
+
+                source == null -> {
+                    "未找到刷卡页的在线卡面地址"
+                }
+
+                else -> {
+                    null
+                }
+            }
+        if (problem != null) throw IOException(problem)
+        val sourceIdentity = walletImageSourceIdentity(source!!, ImageModel.CustomUrl)
+        if (sourceIdentity in sharedImageSources(sources)) {
+            throw IOException("多张卡共用这张卡面，暂不支持单独更换")
+        }
+        if (expected.key !in walletImageCandidates(source, ImageModel.CustomUrl)) {
             throw IOException("这张卡的卡面已发生变化，请刷新后重新选择图片")
         }
-        return image
+        return files
     }
 
     private suspend fun mutate(
+        files: RootWalletFiles,
         image: CachedImage,
         replacement: File,
         saveBackup: Boolean,
@@ -243,7 +310,6 @@ internal class WalletRepository(
             val current = files.read(image.key)
             try {
                 requireFingerprint(image, current)
-                images.validate(current, image.width, image.height)
                 if (saveBackup) saveOriginal(image, current)
                 files.write(image.key, replacement, current)
             } finally {
@@ -258,7 +324,7 @@ internal class WalletRepository(
     ) {
         val original = backupFile(image.key)
         if (original.exists()) {
-            images.validate(original, image.width, image.height)
+            validateCardImage(original, image.width, image.height)
             return
         }
         if (!originals.isDirectory && !originals.mkdirs()) throw IOException("无法创建原始卡面备份目录")
@@ -267,7 +333,7 @@ internal class WalletRepository(
             current.inputStream().use { input ->
                 staging.outputStream().use { output -> input.copyTo(output) }
             }
-            images.validate(staging, image.width, image.height)
+            validateCardImage(staging, image.width, image.height)
             Files.move(staging.toPath(), original.toPath())
         } finally {
             Files.deleteIfExists(staging.toPath())
@@ -288,6 +354,14 @@ internal class WalletRepository(
         cause: Throwable,
     ) : IOException(message, cause)
 }
+
+private fun sharedImageSources(sources: List<String?>): Set<String> =
+    sources
+        .filterNotNull()
+        .groupingBy { walletImageSourceIdentity(it, ImageModel.CustomUrl) }
+        .eachCount()
+        .filterValues { it > 1 }
+        .keys
 
 internal fun swipeImageUrl(
     art: CardArt,

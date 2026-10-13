@@ -395,6 +395,79 @@ The immutable original remains available for explicit restore.
 The wallet can also download its source again after cache eviction.
 Changing one selected cache entry does not permanently change the wallet's server source or every derived cache entry.
 
+### Operation paths and latency
+
+The app has two different work paths:
+
+- A refresh enumerates every visible card, resolves bank density, calculates its exact candidate keys, copies matching cache entries, decodes previews, and calculates fingerprints.
+- A replacement or restore revalidates only the selected card's authorization, then performs one guarded cache transaction.
+
+The full refresh remains deliberate because the screen needs current metadata and previews for every row.
+The mutation path must not repeat that work.
+Fresh provider records still prove that the selected card exists and still owns the expected custom-URL key.
+Source-identity counting still rejects shared cache entries.
+The target copy's SHA-256 fingerprint binds it to the dimensions and decodable bytes established by the previous scan.
+The transaction still validates the path and metadata, stops the wallet, compares the live file with the snapshot, writes into the existing inode, verifies the result, and rolls back on failure.
+
+libsu is not creating a new shell for every command.
+The main shell is a process-wide cached instance returned by Shell.getShell(), and jobs on one shell execute sequentially.
+See the official [Shell API](https://topjohnwu.github.io/libsu/com/topjohnwu/superuser/Shell.html) and
+[job API](https://topjohnwu.github.io/libsu/com/topjohnwu/superuser/Shell.Job.html).
+The repository keeps blocking provider, file, image, and root work on Dispatchers.IO, following Android's
+[coroutine guidance](https://developer.android.com/kotlin/coroutines/coroutines-best-practices#main-safe).
+
+The previous preview path called the full refresh and, without a backup, copied the selected cache again.
+The previous apply and restore paths called the full refresh, copied the selected cache for mutation, wrote it, and then ran another full refresh.
+The optimized path has these properties:
+
+- Preview uses the local immutable original directly when it exists. Without an original, it copies only the selected cache entry.
+- Apply and restore query fresh provider metadata without listing every cache key or decoding unrelated previews.
+- Refresh checks only the exact custom-URL and plain-URL candidates calculated from current card sources. It does not enumerate the full Glide cache directory.
+- A matching persisted bank-density signature avoids another activity dump. A signature miss uses the full two-snapshot calibration path.
+- The selected live cache is copied once for fingerprint, backup, and transaction checks.
+- A matching SHA-256 fingerprint avoids decoding the unchanged live cache again before the transaction.
+- A successful mutation updates only the selected in-memory card row. Manual refresh remains the explicit full reconciliation path.
+- The original alpha mask is decoded once during preview preparation.
+- PNG output calculates SHA-256 while encoding, so the new file is not read again only to fingerprint it.
+
+On the verified device, the old full two-card bank-plus-transit refresh used seven root jobs: provider records, two resolution snapshots, one activity-density dump, one cache listing, and two target copies.
+The old apply or restore path therefore used 16 root jobs: seven before mutation, two for the guarded read and write, and seven afterward.
+An optimized refresh with matching saved density evidence uses five root jobs; the first calibration or a signature miss still uses seven.
+With matching saved bank-density evidence, the selected-card path uses four: provider records, one resolution snapshot, one target copy, and one transaction.
+A density-signature miss uses six.
+These are command counts from the architecture, not wall-clock timing claims.
+The actual duration also depends on su, provider response time, image size, flash storage, wallet shutdown, and PNG encoding.
+
+Temporary duration logging measured five scans before and five scans after candidate-only lookup on the same connected device.
+The logger recorded phase names and elapsed time only; it did not record provider rows, cache keys, card names, or image data.
+The timing code was removed after measurement.
+
+| Measurement | Full-directory lookup | Candidate-only lookup | Change |
+| --- | ---: | ---: | ---: |
+| Complete two-card scan, median | 5,276 ms | 1,421 ms | 73% lower |
+| Complete two-card scan, range | 4,556–5,428 ms | 1,144–1,473 ms | — |
+| Cache-key discovery, median | 4,048 ms | 161 ms | 96% lower |
+| Root provider query, median | 1,010 ms | 1,012 ms | unchanged |
+
+The remaining scan floor is the root-only provider query.
+Its approximately one-second process startup and Binder query are required because the provider uses a signature-or-system permission.
+Direct third-party ContentResolver access is not a valid replacement.
+The exact candidate check keeps the directory, canonical-path, symbolic-link, and hard-link protections used by the writer.
+
+Photo selection was also measured with an existing immutable original and a synthetic 1,600 by 1,000 PNG.
+Decode, crop, full-size alpha masking, and preview creation completed in 36 ms.
+This confirms that image preparation is not the current latency bottleneck when a backup exists.
+
+A one-time equal-byte transaction measured the real selected-cache writer without changing image content or the immutable original.
+It executed canonical-path and link checks, stale-content comparisons, wallet shutdown, in-place writing, metadata verification, and result comparison in 105 ms.
+In the same run, fresh provider metadata took 983 ms, the resolution check took 3 ms, and the target copy took 26 ms.
+Those required root phases total 1,117 ms.
+An actual replacement additionally encodes the prepared PNG and validates or creates its first backup; an actual restore decodes the local backup.
+
+The final optimized debug APK cold-started its activity in 251–257 ms across two runs on the connected device; card scanning continued asynchronously after that measurement.
+The completed scan and a manual refresh both showed two cards with two editable targets, with no application error in logcat.
+The device check did not apply or restore a private card image, so real mutation latency remains unmeasured.
+
 ## Verification scope
 
 Synthetic JVM tests cover provider framing, visibility, distinct and ambiguous identities, source precedence, signed URLs, and Glide digest fixtures.
@@ -403,12 +476,12 @@ Root transaction tests use temporary synthetic files. They verify normal writes,
 Device checks validate launch, card enumeration, eligibility messages, and absence of crashes.
 Private wallet images require a separate deliberate user flow for visual replacement verification.
 
-`alint` requires version `0.18.0`. Its installation remains pending approval, so unavailable installations do not trigger a dependency workaround.
+`alint` is pinned to version `0.18.0` through `mise`.
 
 ### Verified rebuild results
 
 The rebuild passed `mise run format`, `mise run check`, and the debug APK build.
-All 47 JVM tests passed. Android Lint reported no errors or warnings.
+All 48 JVM tests passed. Android Lint reported no errors or warnings.
 The debug APK installed on the connected device and displayed the card list with previews and eligibility messages.
 An Android synthetic-cache check passed normal writes, stale-content rejection, rollback, and owner, mode, inode, and SELinux-context preservation.
 The check used temporary files and a stub wallet-stop command. It did not replace a private wallet image.
@@ -429,7 +502,7 @@ No fingerprint authentication, payment, card issuance, or private wallet-image m
 
 The Gradle configuration emits a deprecation warning for `Configuration.setVisible(boolean)` before application tasks run.
 The pinned build still succeeds. The rebuild does not patch or replace the build plugins to suppress this warning.
-`alint` was unavailable, so its separate check did not run.
+`mise run alint` passed with the pinned `alint` 0.18.0 binary.
 
 ## Ablation study
 
@@ -447,6 +520,23 @@ Only the accepted changes reached the installed APK. No private wallet image was
 | No density retention | Return no saved density when wallet activities are missing | 2 of 12 density tests fail: wallet stop and editor restart | Restore retention |
 | No invalid-state distinction | Reuse saved density for invalid wallet configuration | 1 of 12 density tests fails: conflicting or invalid evidence must discard calibration | Restore distinction |
 | No stale-content check | Remove both content comparisons before the root write | 1 of 10 transaction tests fails: same-size changed content is overwritten | Restore comparisons |
+
+### Follow-up ablation
+
+The follow-up used the passing working tree after the initial study as its baseline.
+It contained 1,834 lines of main Kotlin and 20 top-level type declarations.
+
+| Experiment | Change | Observation | Decision |
+| --- | --- | --- | --- |
+| Stateless utility owners | Replace the stateless `CacheWriteScript` object and single-owner `CardImages` class with named top-level functions | Two type declarations disappear; transaction and JVM tests pass | Keep deletion |
+| Broad Android context | Pass `cacheDir` to `RootWalletFiles` instead of storing an application `Context` used only for that directory | Root access owns only the value it needs; JVM tests pass | Keep deletion |
+| Nested presentation model | Give final `WalletCard` rows direct `id`, `name`, and `kind` fields instead of exposing the complete parsed model through `info` | Twelve `card.info` dereferences disappear; parsed art and parse problems stay inside the scan layer | Keep simplification |
+| Inline swiping URL mapper | Inline the single-use `swipeImageUrl` transformation into the scan | Tests pass, but the long bank URL and art branches obscure the scan sequence | Restore named transformation |
+
+The accepted follow-up leaves 1,829 lines of main Kotlin and 18 top-level type declarations.
+Kotlin supports top-level functions without holder classes and recommends them when all required state can be passed as parameters.
+The remaining sealed `CardArt`, `CardFace`, and `WalletDensityObservation` types stay because they define closed runtime states and give exhaustive `when` checks.
+See the official Kotlin guidance for [top-level functions](https://kotlinlang.org/docs/api-guidelines-consistency.html) and [sealed state hierarchies](https://kotlinlang.org/docs/sealed-classes.html).
 
 The transaction experiment used temporary synthetic files and a stub wallet-stop command.
 The negative density experiments used synthetic activity output. They did not change device display settings.

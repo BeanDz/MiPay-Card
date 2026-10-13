@@ -1,6 +1,5 @@
 package dev.doji.mipaycard.data
 
-import android.content.Context
 import android.os.Process
 import com.topjohnwu.superuser.NoShellException
 import com.topjohnwu.superuser.Shell
@@ -10,11 +9,9 @@ import java.nio.file.Files
 
 /** Callers run root work off the UI thread and own every returned temporary file. */
 internal class RootWalletFiles(
-    context: Context,
+    private val cacheDir: File,
     private val walletDataDir: String,
 ) {
-    private val context = context.applicationContext
-
     fun displayResolutionOverride(): String =
         command(
             "getprop persist.sys.miui_resolution 2>&1",
@@ -37,44 +34,28 @@ internal class RootWalletFiles(
             ),
         )
 
-    fun keys(): Set<String> {
+    fun keys(candidates: Set<String>): Set<String> {
+        if (candidates.isEmpty()) return emptySet()
         val output =
             command(
-                CacheWriteScript.directoryGuard(walletDataDir) +
-                    "\n" +
-                    """
-                    wallet_root=${'$'}(readlink -f "${'$'}wallet") || exit 41
-                    test -d "${'$'}wallet_root" || exit 41
-                    test ! -L "${'$'}wallet_root/cache" || exit 41
-                    test ! -L "${'$'}wallet_root/cache/image_manager_disk_cache" || exit 41
-                    test -d "${'$'}wallet_root/cache/image_manager_disk_cache" || exit 0
-                    validate_directory || exit 41
-                    for file in "${'$'}cache_root"/*.0; do
-                        test -f "${'$'}file" || continue
-                        test ! -L "${'$'}file" || continue
-                        links=${'$'}(stat -c '%h' "${'$'}file") || exit 41
-                        test "${'$'}links" = 1 || continue
-                        name=${'$'}{file##*/}
-                        printf '%s\n' "${'$'}{name%.0}" || exit 1
-                    done
-                    """.trimIndent(),
+                cacheCandidateKeysScript(walletDataDir, candidates),
                 "无法读取小米智能卡缓存，缓存路径可能已失效",
             )
-        return output.filter(CacheWriteScript::validKey).toSet()
+        return output.filter(::validCacheKey).toSet()
     }
 
     fun read(key: String): File {
         validateKey(key)
-        val temporary = File.createTempFile("wallet-", ".cache", context.cacheDir)
+        val temporary = File.createTempFile("wallet-", ".cache", cacheDir)
         try {
             command(
-                CacheWriteScript.targetGuard(walletDataDir, key) +
+                cacheTargetGuard(walletDataDir, key) +
                     "\n" +
                     """
                     validate_target || exit 41
-                    cat "${'$'}target" > ${CacheWriteScript.quote(temporary.path)} &&
-                    chown ${Process.myUid()}:${Process.myUid()} ${CacheWriteScript.quote(temporary.path)} &&
-                    chmod 600 ${CacheWriteScript.quote(temporary.path)}
+                    cat "${'$'}target" > ${quoteShell(temporary.path)} &&
+                    chown ${Process.myUid()}:${Process.myUid()} ${quoteShell(temporary.path)} &&
+                    chmod 600 ${quoteShell(temporary.path)}
                     """.trimIndent(),
                 "无法读取卡面缓存，请重新扫描",
             )
@@ -92,14 +73,14 @@ internal class RootWalletFiles(
     ) {
         validateKey(key)
         command(
-            CacheWriteScript.write(walletDataDir, key, source.path, previous.path),
+            cacheWriteScript(walletDataDir, key, source.path, previous.path),
             "无法写入卡面缓存",
             transaction = true,
         )
     }
 
     private fun validateKey(key: String) {
-        if (!CacheWriteScript.validKey(key)) throw IOException("无效的卡面缓存标识")
+        if (!validCacheKey(key)) throw IOException("无效的卡面缓存标识")
     }
 
     private fun command(

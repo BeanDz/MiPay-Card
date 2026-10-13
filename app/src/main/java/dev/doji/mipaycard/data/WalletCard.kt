@@ -23,6 +23,8 @@ internal sealed interface CardFace {
 }
 
 internal data class WalletCard(
-    val info: WalletCardInfo,
+    val id: String,
+    val name: String,
+    val kind: CardKind,
     val face: CardFace,
 )

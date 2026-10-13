@@ -9,6 +9,7 @@ jobs:
             - uses: android-actions/setup-android@v3
             - uses: jdx/mise-action@v3
             - run: mise run setup
+            - run: mise run alint
             - run: mise run check
             - run: mise run build
             - uses: actions/upload-artifact@v4

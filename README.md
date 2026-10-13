@@ -90,15 +90,14 @@ Run the project checks:
 ```sh
 mise run format
 mise run check
+mise run alint
 ```
 
 The check task runs ktlint, Android Lint, and JVM tests.
 The tests use synthetic metadata, URLs, and temporary cache files.
 They cover provider output, swiping eligibility, source selection, cache keys, and root-write transactions.
 
-When `alint` version `0.18.0` is available, run `mise run alint`.
-Its installation remains pending approval.
-The [alint configuration](.alint.yml) checks repository hygiene without an AI model.
+The pinned `alint` 0.18.0 tool and [alint configuration](.alint.yml) check repository hygiene without an AI model.
 
 Private device artifacts belong in ignored `artifacts/` or temporary storage.
 They must remain outside version control.
