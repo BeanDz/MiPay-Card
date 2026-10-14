@@ -1,34 +1,39 @@
 package dev.doji.mipaycard
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -45,6 +50,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,19 +58,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.doji.mipaycard.data.CardFace
 import dev.doji.mipaycard.data.CardKind
 import dev.doji.mipaycard.data.WalletCard
+import kotlin.math.roundToInt
+
+private enum class CardExpansionPhase {
+    Stacked,
+    Moving,
+    Expanded,
+}
 
 private val cardKindLabels =
     mapOf(
@@ -96,8 +116,26 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     val state by model.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var editingKey by rememberSaveable { mutableStateOf<String?>(null) }
-    var restoreKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var cardOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val cardsById = state.cards.associateBy { it.id }
+    val orderedIds = cardOrder.filter { it in cardsById } + state.cards.map { it.id }.filter { it !in cardOrder }
+    val orderedCards = orderedIds.mapNotNull(cardsById::get)
     val busy = state.task != CardTask.Idle
+
+    fun collapseCard() {
+        val key = selectedKey ?: return
+        cardOrder = listOf(key) + orderedIds.filter { it != key }
+        selectedKey = null
+    }
+
+    BackHandler(enabled = selectedKey != null, onBack = ::collapseCard)
+
+    LaunchedEffect(state.cards, state.hasLoaded) {
+        if (!state.hasLoaded) return@LaunchedEffect
+        cardOrder = orderedIds
+        if (state.cards.none { it.id == selectedKey }) selectedKey = null
+    }
     val photoPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
             val key = editingKey
@@ -113,50 +151,59 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     }
 
     Scaffold(
+        modifier =
+            if (selectedKey != null) {
+                Modifier.clickable(
+                    interactionSource = null,
+                    indication = null,
+                    onClickLabel = stringResource(R.string.collapse),
+                    onClick = ::collapseCard,
+                )
+            } else {
+                Modifier
+            },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.app_name)) },
             )
         },
-        snackbarHost = { SnackbarHost(snackbar) },
+        contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
+        snackbarHost = { SnackbarHost(snackbar, Modifier.navigationBarsPadding()) },
     ) { insets ->
-        Column(Modifier.padding(insets)) {
-            if (busy && state.task != CardTask.Scanning) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
+        Column(Modifier.padding(insets).consumeWindowInsets(insets)) {
             PullToRefreshBox(
                 isRefreshing = state.task == CardTask.Scanning,
                 onRefresh = model::refresh,
                 modifier = Modifier.fillMaxSize(),
+                indicator = {},
             ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (state.cards.isEmpty() && state.hasLoaded && !busy) {
-                        item {
+                if (state.cards.isNotEmpty()) {
+                    CardStack(
+                        cards = orderedCards,
+                        selectedKey = selectedKey,
+                        restoringCardId = state.restoringCardId,
+                        enabled = !busy,
+                        onSelect = { card ->
+                            val wasSelected = selectedKey == card.id
+                            collapseCard()
+                            if (!wasSelected) selectedKey = card.id
+                        },
+                        onChange = {
+                            editingKey = it.id
+                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                        onRestore = { model.restore(it.id) },
+                    )
+                } else {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        if (state.hasLoaded && !busy) {
                             EmptyCards(onRefresh = model::refresh)
-                        }
-                    }
-                    if (!state.hasLoaded && !busy) {
-                        item {
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        } else if (!state.hasLoaded && !busy) {
+                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Text(stringResource(R.string.load_required))
                                 FilledTonalButton(onClick = model::refresh) { Text(stringResource(R.string.retry)) }
                             }
                         }
-                    }
-                    items(state.cards, key = { card -> card.id }) { card ->
-                        CardItem(
-                            card = card,
-                            enabled = !busy,
-                            onChange = {
-                                editingKey = card.id
-                                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                            },
-                            onRestore = { restoreKey = card.id },
-                        )
                     }
                 }
             }
@@ -190,25 +237,6 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
             },
         )
     }
-    restoreKey?.let { key ->
-        AlertDialog(
-            onDismissRequest = { restoreKey = null },
-            title = { Text(stringResource(R.string.restore_title)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    restoreKey = null
-                    model.restore(key)
-                }, enabled = !busy) {
-                    Text(stringResource(R.string.restore))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { restoreKey = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
     state.error?.let { error ->
         AlertDialog(
             onDismissRequest = model::dismissError,
@@ -222,103 +250,207 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
 }
 
 @Composable
-private fun CardItem(
-    card: WalletCard,
+private fun CardStack(
+    cards: List<WalletCard>,
+    selectedKey: String?,
+    restoringCardId: String?,
     enabled: Boolean,
+    onSelect: (WalletCard) -> Unit,
+    onChange: (WalletCard) -> Unit,
+    onRestore: (WalletCard) -> Unit,
+) {
+    val scrollState = rememberScrollState()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val viewportHeight = maxHeight
+        LookaheadScope {
+            Layout(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState, reverseScrolling = true)
+                        .clipToBounds()
+                        .padding(horizontal = 20.dp),
+                content = {
+                    cards.forEach { card ->
+                        key(card.id) {
+                            StackedCard(
+                                card = card,
+                                expanded = card.id == selectedKey,
+                                restoring = card.id == restoringCardId,
+                                protectNavigationBar = cards.size == 1,
+                                lookaheadScope = this@LookaheadScope,
+                                enabled = enabled,
+                                onSelect = { onSelect(card) },
+                                onChange = { onChange(card) },
+                                onRestore = { onRestore(card) },
+                            )
+                        }
+                    }
+                },
+            ) { measurables, constraints ->
+                val placeables = measurables.map { it.measure(constraints.copy(minHeight = 0)) }
+                val selectedIndex = cards.indexOfFirst { it.id == selectedKey }
+                val remainingIndices = cards.indices.filter { it != selectedIndex }
+                val exposedHeights =
+                    remainingIndices.map { index ->
+                        val fraction = if (index == remainingIndices.last()) 0.5f else 0.2f
+                        (placeables[index].height * fraction).roundToInt()
+                    }
+                val pileHeight = exposedHeights.sum()
+                val selected = placeables.getOrNull(selectedIndex)
+                val gap = if (selected != null && remainingIndices.isNotEmpty()) 24.dp.roundToPx() else 0
+                val topSpace = if (selected != null) 48.dp.roundToPx() else 0
+                val height = maxOf(viewportHeight.roundToPx(), pileHeight + gap + (selected?.height ?: 0) + topSpace)
+                layout(constraints.maxWidth, height) {
+                    var y = height - pileHeight
+                    remainingIndices.forEachIndexed { pileIndex, index ->
+                        placeables[index].placeRelative(0, y, zIndex = pileIndex.toFloat())
+                        y += exposedHeights[pileIndex]
+                    }
+                    selected?.placeRelative(0, height - pileHeight - gap - selected.height, zIndex = cards.size.toFloat())
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StackedCard(
+    card: WalletCard,
+    expanded: Boolean,
+    restoring: Boolean,
+    protectNavigationBar: Boolean,
+    lookaheadScope: LookaheadScope,
+    enabled: Boolean,
+    onSelect: () -> Unit,
     onChange: () -> Unit,
     onRestore: () -> Unit,
 ) {
-    var showMenu by remember { mutableStateOf(false) }
-    val moreDescription = stringResource(R.string.card_more, card.name)
-    val kindLabel = stringResource(cardKindLabels.getValue(card.kind))
+    var phase by remember(expanded) {
+        mutableStateOf(if (expanded) CardExpansionPhase.Moving else CardExpansionPhase.Stacked)
+    }
+    val controlsVisible = phase == CardExpansionPhase.Expanded
+    val transition = updateTransition(controlsVisible, label = "cardExpansion")
+    val expansion =
+        transition.animateFloat(
+            transitionSpec = { spring(dampingRatio = CARD_SPRING_DAMPING, stiffness = Spring.StiffnessMediumLow) },
+            label = "cardControls",
+        ) { if (it) 1f else 0f }
+    val bringIntoView = remember { BringIntoViewRequester() }
+    LaunchedEffect(expanded, phase) {
+        if (!expanded || phase != CardExpansionPhase.Expanded) return@LaunchedEffect
+        bringIntoView.bringIntoView()
+    }
     val editable = card.face as? CardFace.Editable
+    val controlsModifier =
+        Modifier
+            .graphicsLayer { alpha = expansion.value.coerceIn(0f, 1f) }
+            .then(if (controlsVisible) Modifier else Modifier.clearAndSetSemantics {})
+    Layout(
+        modifier = Modifier.bringIntoViewRequester(bringIntoView),
+        content = {
+            Column(
+                controlsModifier
+                    .then(
+                        if (restoring) {
+                            Modifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics {}
+                        } else {
+                            Modifier
+                        },
+                    ).fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(card.name, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    stringResource(cardKindLabels.getValue(card.kind)),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            CardFaceImage(
+                card,
+                Modifier
+                    .animateCardPosition(lookaheadScope) {
+                        if (expanded && phase == CardExpansionPhase.Moving) phase = CardExpansionPhase.Expanded
+                    }.shakeWhileRestoring(restoring)
+                    .clickable(
+                        enabled = enabled,
+                        interactionSource = null,
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onSelect,
+                    ),
+            )
+            Column(
+                modifier =
+                    controlsModifier
+                        .then(if (protectNavigationBar) Modifier.navigationBarsPadding() else Modifier)
+                        .padding(top = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                (card.face as? CardFace.Unavailable)?.let { Text(it.reason) }
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                    if (editable != null) {
+                        ChangeCardButton(
+                            enabled = enabled && controlsVisible,
+                            restoring = restoring,
+                            onChange = onChange,
+                            onRestore = if (editable.hasBackup) onRestore else null,
+                            modifier = Modifier.shakeWhileRestoring(restoring),
+                        )
+                    }
+                }
+            }
+        },
+    ) { measurables, constraints ->
+        val childConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
+        val header = measurables[0].measure(childConstraints)
+        val face = measurables[1].measure(childConstraints)
+        val actions = measurables[2].measure(childConstraints)
+        val targetHeight = face.height + if (expanded) header.height + actions.height else 0
+        layout(face.width, constraints.constrainHeight(targetHeight)) {
+            val progress = expansion.value
+            val faceY = if (expanded) header.height else 0
+            header.placeRelative(0, faceY - (header.height * progress).roundToInt())
+            actions.placeRelative(0, faceY + face.height - (actions.height * (1f - progress)).roundToInt())
+            face.placeRelative(0, faceY, zIndex = 1f)
+        }
+    }
+}
+
+@Composable
+private fun CardFaceImage(
+    card: WalletCard,
+    modifier: Modifier = Modifier,
+) {
     val preview =
         when (val face = card.face) {
             is CardFace.Editable -> face.image.preview
             is CardFace.Unavailable -> face.preview
         }
-    val iconColor = MaterialTheme.colorScheme.onSurfaceVariant
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    val shape = RoundedCornerShape(16.dp)
+    val imageModifier =
+        modifier
+            .fillMaxWidth()
+            .aspectRatio(preview?.let { it.width.toFloat() / it.height } ?: (960f / 606f))
+            .clip(shape)
+    if (preview != null) {
+        Image(
+            preview.asImageBitmap(),
+            contentDescription = card.name,
+            modifier = imageModifier,
+            contentScale = ContentScale.Fit,
+        )
+    } else {
+        Box(
+            imageModifier
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .semantics { contentDescription = card.name },
         ) {
-            Text(card.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-            if (editable?.hasBackup == true) {
-                Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        enabled = enabled,
-                        modifier = Modifier.semantics { contentDescription = moreDescription },
-                    ) {
-                        Canvas(Modifier.size(24.dp)) {
-                            for (position in listOf(0.25f, 0.5f, 0.75f)) {
-                                drawCircle(iconColor, radius = 2.dp.toPx(), center = Offset(size.width * position, size.height / 2))
-                            }
-                        }
-                    }
-                    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.restore)) },
-                            onClick = {
-                                showMenu = false
-                                onRestore()
-                            },
-                            enabled = enabled,
-                        )
-                    }
-                }
-            }
-        }
-        val imageModifier =
-            Modifier
-                .padding(horizontal = 12.dp)
-                .fillMaxWidth()
-                .aspectRatio(preview?.let { it.width.toFloat() / it.height } ?: (960f / 606f))
-                .clip(RoundedCornerShape(14.dp))
-        if (preview != null) {
-            Image(
-                preview.asImageBitmap(),
-                contentDescription = card.name,
-                modifier = imageModifier,
-                contentScale = ContentScale.Fit,
-            )
-        } else {
-            Box(
-                imageModifier.background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                contentAlignment = Alignment.Center,
-            ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(card.name, style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(R.string.card_image_unavailable), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    kindLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (card.face is CardFace.Unavailable) {
-                    Text(
-                        card.face.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (editable != null) {
-                TextButton(onClick = onChange, enabled = enabled) {
-                    Text(stringResource(R.string.change))
-                }
             }
         }
     }
@@ -327,7 +459,7 @@ private fun CardItem(
 @Composable
 private fun EmptyCards(onRefresh: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        modifier = Modifier.fillMaxWidth().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

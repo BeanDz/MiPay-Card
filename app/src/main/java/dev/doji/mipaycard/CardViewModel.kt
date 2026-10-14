@@ -33,6 +33,7 @@ internal data class CardScreenState(
     val cards: List<WalletCard> = emptyList(),
     val hasLoaded: Boolean = false,
     val task: CardTask = CardTask.Idle,
+    val restoringCardId: String? = null,
     val replacement: ReplacementPreview? = null,
     val error: String? = null,
     val message: String? = null,
@@ -88,7 +89,7 @@ internal class CardViewModel(
     fun restore(cardId: String) {
         val card = state.value.cards.find { it.id == cardId } ?: return
         val face = card.face as? CardFace.Editable ?: return
-        launchOperation(CardTask.Restoring) {
+        launchOperation(CardTask.Restoring, restoringCardId = cardId) {
             val image = repository.restore(cardId, face.image)
             mutableState.update {
                 it.copy(
@@ -122,10 +123,11 @@ internal class CardViewModel(
 
     private fun launchOperation(
         task: CardTask,
+        restoringCardId: String? = null,
         operation: suspend () -> Unit,
     ) {
         if (state.value.task != CardTask.Idle) return
-        mutableState.update { it.copy(task = task, error = null) }
+        mutableState.update { it.copy(task = task, restoringCardId = restoringCardId, error = null) }
         viewModelScope.launch {
             try {
                 operation()
@@ -134,7 +136,7 @@ internal class CardViewModel(
             } catch (error: SecurityException) {
                 reportError(error)
             } finally {
-                mutableState.update { it.copy(task = CardTask.Idle) }
+                mutableState.update { it.copy(task = CardTask.Idle, restoringCardId = null) }
             }
         }
     }
