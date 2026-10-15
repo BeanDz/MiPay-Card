@@ -3,6 +3,7 @@ package dev.doji.mipaycard.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Size
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -21,11 +22,6 @@ internal class WalletRepository(
     private val originals = File(this.context.filesDir, "originals")
     private val densityPreferences = this.context.getSharedPreferences("wallet-density", Context.MODE_PRIVATE)
 
-    suspend fun scan(): List<WalletCard> =
-        withContext(Dispatchers.IO) {
-            scanCards()
-        }
-
     suspend fun prepareReplacement(
         expected: CachedImage,
         uri: Uri,
@@ -33,8 +29,7 @@ internal class WalletRepository(
         withContext(Dispatchers.IO) {
             val original = backupFile(expected.key)
             if (original.exists()) return@withContext prepareCardImage(context, expected, uri, original)
-            val profile = readWalletProfile(context)
-            if (profile.problem != null) throw IOException(profile.problem)
+            val profile = WalletProfile(context)
             val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
             val current = files.read(expected.key)
             try {
@@ -81,40 +76,36 @@ internal class WalletRepository(
             restored
         }
 
-    private suspend fun scanCards(): List<WalletCard> {
-        var profile = readWalletProfile(context)
-        val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
-        val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
-        if (cards.isEmpty()) return emptyList()
-        if (profile.problem != null) {
-            return cards.map { WalletCard(it.id, it.name, it.kind, CardFace.Unavailable(profile.problem)) }
-        }
-        if (cards.any { it.art is CardArt.BankIdentifier }) {
-            profile = resolveBankProfile(profile, files)
-        }
+    suspend fun scan(): List<WalletCard> =
+        withContext(Dispatchers.IO) {
+            val profile = WalletProfile(context)
+            val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
+            val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
+            if (cards.isEmpty()) return@withContext emptyList()
+            val bankSize = readBankSize(cards, profile, files)
 
-        val sources = cards.map { card -> swipeImageUrl(card.art, profile.bankWidth, profile.bankHeight) }
-        val candidates =
-            sources
-                .filterNotNull()
-                .flatMap { url ->
-                    walletImageCandidates(url, ImageModel.CustomUrl) + walletImageCandidates(url, ImageModel.PlainUrl)
-                }.toSet()
-        val keys = files.keys(candidates)
-        val sharedSources = sharedImageSources(sources)
-        return cards.mapIndexed { index, card ->
-            currentCoroutineContext().ensureActive()
-            val source = sources[index]
-            val problem = card.problem ?: unsupportedArtReason(card.art, source, profile.bankWidth)
-            val face =
-                if (problem == null) {
-                    resolveFace(files, source!!, keys, sharedSources)
-                } else {
-                    CardFace.Unavailable(problem)
-                }
-            WalletCard(card.id, card.name, card.kind, face)
+            val sources = cards.map { card -> swipeImageUrl(card.art, bankSize.width, bankSize.height) }
+            val candidates =
+                sources
+                    .filterNotNull()
+                    .flatMap { url ->
+                        walletImageCandidates(url, ImageModel.CustomUrl) + walletImageCandidates(url, ImageModel.PlainUrl)
+                    }.toSet()
+            val keys = files.keys(candidates)
+            val sharedSources = sharedImageSources(sources)
+            cards.mapIndexed { index, card ->
+                currentCoroutineContext().ensureActive()
+                val source = sources[index]
+                val problem = card.problem ?: unsupportedArtReason(card.art, source, bankSize.width)
+                val face =
+                    if (problem == null) {
+                        resolveFace(files, source!!, keys, sharedSources)
+                    } else {
+                        CardFace.Unavailable(problem)
+                    }
+                WalletCard(card.id, card.name, card.kind, face)
+            }
         }
-    }
 
     private fun resolveDensity(
         observation: WalletDensityObservation,
@@ -137,34 +128,14 @@ internal class WalletRepository(
         return current?.densityDpi
     }
 
-    private fun savedDensity(signature: String): Int? {
-        if (densityPreferences.getString("signature", null) != signature) return null
-        return densityPreferences.getInt("density", 0).takeIf { it > 0 }
-    }
-
-    private fun resolveBankProfile(
-        initialProfile: WalletProfile,
+    private fun readBankSize(
+        cards: List<WalletCardInfo>,
+        profile: WalletProfile,
         files: RootWalletFiles,
-    ): WalletProfile {
-        val resolutionOverride = files.displayResolutionOverride()
-        val currentProfile = readWalletProfile(context)
-        val signature = JSONArray(listOf(currentProfile.densitySignature, resolutionOverride)).toString()
-        if (initialProfile.densitySignature == currentProfile.densitySignature) {
-            savedDensity(signature)?.let { return readWalletProfile(context, it) }
-        }
-
-        val observation = files.resourceDensity()
-        val finalProfile = readWalletProfile(context)
-        val stableObservation =
-            if (currentProfile.densitySignature == finalProfile.densitySignature &&
-                resolutionOverride == files.displayResolutionOverride()
-            ) {
-                observation
-            } else {
-                WalletDensityObservation.Invalid
-            }
-        val finalSignature = JSONArray(listOf(finalProfile.densitySignature, resolutionOverride)).toString()
-        return readWalletProfile(context, resolveDensity(stableObservation, finalSignature))
+    ): Size {
+        if (cards.none { it.art is CardArt.BankIdentifier }) return Size(0, 0)
+        val signature = JSONArray(listOf(profile.densitySignature, files.displayResolutionOverride())).toString()
+        return profile.bankImageSize(resolveDensity(files.resourceDensity(), signature))
     }
 
     private fun resolveFace(
@@ -220,11 +191,9 @@ internal class WalletRepository(
     ): CachedImage {
         val current = files.read(key)
         try {
-            return try {
-                readCachedImage(key, current)
-            } catch (error: IOException) {
-                throw ImageCacheException(error.message ?: "无法解码卡面缓存", error)
-            }
+            return readCachedImage(key, current)
+        } catch (error: IOException) {
+            throw ImageCacheException(error.message ?: "无法解码卡面缓存", error)
         } finally {
             Files.deleteIfExists(current.toPath())
         }
@@ -234,20 +203,17 @@ internal class WalletRepository(
         cardId: String,
         expected: CachedImage,
     ): RootWalletFiles {
-        var profile = readWalletProfile(context)
-        if (profile.problem != null) throw IOException(profile.problem)
+        val profile = WalletProfile(context)
         val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
         val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
         val cardIndex = cards.indexOfFirst { it.id == cardId }
         if (cardIndex < 0) throw IOException("这张卡已不在刷卡列表中，请刷新后重试")
         val card = cards[cardIndex]
         if (card.problem != null) throw IOException(card.problem)
-        if (cards.any { it.art is CardArt.BankIdentifier }) {
-            profile = resolveBankProfile(profile, files)
-        }
-        val sources = cards.map { swipeImageUrl(it.art, profile.bankWidth, profile.bankHeight) }
+        val bankSize = readBankSize(cards, profile, files)
+        val sources = cards.map { swipeImageUrl(it.art, bankSize.width, bankSize.height) }
         val source = sources[cardIndex]
-        val problem = unsupportedArtReason(card.art, source, profile.bankWidth)
+        val problem = unsupportedArtReason(card.art, source, bankSize.width)
         if (problem != null) throw IOException(problem)
         val sourceIdentity = walletImageSourceIdentity(source!!, ImageModel.CustomUrl)
         if (sourceIdentity in sharedImageSources(sources)) {

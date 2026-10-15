@@ -48,7 +48,6 @@ class WalletRuntimeDensityTest {
                     "mLastConfigurationFromResources={497dpi display=0}",
                     "mLastConfigurationFromResources={520dpi display=0}",
                 ),
-                listOf("mLastConfigurationFromResources={497dpi display=1}"),
                 listOf("mCurrentConfig={520dpi display=0}"),
             )
         for (configuration in configurations) {
@@ -98,12 +97,12 @@ class WalletRuntimeDensityTest {
     }
 
     @Test
-    fun selectsAdjustedSwipingResourcesInsteadOfGlobalOrAnotherActivity() {
+    fun selectsWalletResourcesInsteadOfGlobalOrForeignActivity() {
         assertEquals(
             WalletDensityObservation.Verified(497),
             walletDensityObservation(
                 listOf(
-                    "  ACTIVITY com.miui.tsmclient/.ui.CardIntroActivity token pid=1",
+                    "  ACTIVITY example.other/.ui.CardIntroActivity token pid=1",
                     "    mLastConfigurationFromResources={450dpi display=0 extraData=Bundle[{}]}",
                     "  ACTIVITY com.miui.tsmclient/.ui.quick.DoubleClickActivity token pid=1",
                     "    mCurrentConfig={520dpi display=0}",
@@ -127,10 +126,9 @@ class WalletRuntimeDensityTest {
     }
 
     @Test
-    fun rejectsSecondaryDisplayAndMissingResourceEvidence() {
+    fun rejectsMissingResourceEvidence() {
         for (config in listOf(
             "mCurrentConfig={520dpi display=0}",
-            "mLastConfigurationFromResources={429dpi display=1}",
             "mLastConfigurationFromResources={497dpi}",
             "mLastConfigurationFromResources={invalid display=0}",
         )) {
@@ -143,6 +141,63 @@ class WalletRuntimeDensityTest {
                     ),
                 ),
             )
+        }
+    }
+
+    @Test
+    fun acceptsCurrentAndFutureWalletActivityNames() {
+        for (activity in listOf(".ui.CardHolderAndroidVEntranceActivity", ".ui.MiPayEntranceActivity", ".ui.FutureCardActivity")) {
+            assertEquals(
+                WalletDensityObservation.Verified(497),
+                walletDensityObservation(
+                    listOf(
+                        "ACTIVITY com.miui.tsmclient/$activity token",
+                        "mCurrentConfig={520dpi display=0}",
+                        "mLastConfigurationFromResources={497dpi display=0}",
+                    ),
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun ignoresKnownSecondaryDisplayResources() {
+        val secondary =
+            listOf(
+                "ACTIVITY com.miui.tsmclient/.ui.FutureCardActivity token",
+                "mLastConfigurationFromResources={429dpi display=1}",
+            )
+
+        assertEquals(WalletDensityObservation.Missing, walletDensityObservation(secondary))
+        assertEquals(
+            WalletDensityObservation.Verified(497),
+            walletDensityObservation(
+                secondary +
+                    listOf(
+                        "ACTIVITY com.miui.tsmclient/.ui.MiPayEntranceActivity token",
+                        "mLastConfigurationFromResources={497dpi display=0}",
+                    ),
+            ),
+        )
+    }
+
+    @Test
+    fun rejectsConflictsAndIncompleteEvidenceFromUnfamiliarWalletActivities() {
+        val known =
+            listOf(
+                "ACTIVITY com.miui.tsmclient/.ui.CardHolderAndroidVEntranceActivity token",
+                "mLastConfigurationFromResources={497dpi display=0}",
+            )
+        for (configuration in listOf(
+            "mLastConfigurationFromResources={520dpi display=0}",
+            "mLastConfigurationFromResources={invalid display=0}",
+            "mLastConfigurationFromResources={497dpi}",
+            "mCurrentConfig={497dpi display=0}",
+        )) {
+            val unfamiliar = listOf("ACTIVITY com.miui.tsmclient/.ui.FutureCardActivity token", configuration)
+
+            assertEquals(WalletDensityObservation.Invalid, walletDensityObservation(known + unfamiliar))
+            assertEquals(WalletDensityObservation.Invalid, walletDensityObservation(unfamiliar + known))
         }
     }
 

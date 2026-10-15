@@ -27,47 +27,37 @@ internal fun reconcileWalletDensity(
         WalletDensityObservation.Invalid -> null
     }
 
-/** These verified activities share AutoDensity's display configuration and have no opt-out. */
+/** Read the wallet's actual resource density without depending on activity class names. */
 internal fun walletDensityObservation(lines: List<String>): WalletDensityObservation {
     val densities = mutableSetOf<Int>()
-    var eligibleActivity = false
-    var foundEligibleActivity = false
-    var foundMainConfiguration = false
+    var walletActivity = false
+    var foundResourceConfiguration = false
     for (line in lines) {
         if (line.trimStart().startsWith("ACTIVITY ")) {
-            if (eligibleActivity && !foundMainConfiguration) return WalletDensityObservation.Invalid
+            if (walletActivity && !foundResourceConfiguration) return WalletDensityObservation.Invalid
             val component = line.trimStart().substringAfter("ACTIVITY ").substringBefore(' ')
-            val activity =
-                if (component.startsWith("com.miui.tsmclient/")) {
-                    component.substringAfter('/')
-                } else {
-                    ""
-                }
-            val fullName = if (activity.startsWith('.')) "com.miui.tsmclient$activity" else activity
-            eligibleActivity = fullName in densityActivities
-            foundEligibleActivity = foundEligibleActivity || eligibleActivity
-            foundMainConfiguration = false
+            walletActivity = component.substringBefore('/') == "com.miui.tsmclient" && component.substringAfter('/', "").isNotBlank()
+            foundResourceConfiguration = false
         }
-        if (!eligibleActivity || !line.trimStart().startsWith("mLastConfigurationFromResources=")) continue
-        if (!Regex("\\bdisplay=0\\b").containsMatchIn(line)) continue
+        if (!walletActivity || !line.trimStart().startsWith("mLastConfigurationFromResources=")) continue
+        val display =
+            Regex("\\bdisplay=([0-9]+)\\b")
+                .find(line)
+                ?.groupValues
+                ?.get(1)
+                ?.toIntOrNull() ?: return WalletDensityObservation.Invalid
+        foundResourceConfiguration = true
+        if (display != 0) continue
         val density =
             Regex("\\b([1-9][0-9]*)dpi\\b")
                 .find(line)
                 ?.groupValues
                 ?.get(1)
                 ?.toIntOrNull() ?: return WalletDensityObservation.Invalid
-        foundMainConfiguration = true
         densities.add(density)
     }
-    if (!foundEligibleActivity) return WalletDensityObservation.Missing
-    if (eligibleActivity && !foundMainConfiguration) return WalletDensityObservation.Invalid
+    if (walletActivity && !foundResourceConfiguration) return WalletDensityObservation.Invalid
+    if (densities.isEmpty()) return WalletDensityObservation.Missing
     val density = densities.singleOrNull() ?: return WalletDensityObservation.Invalid
     return WalletDensityObservation.Verified(density)
 }
-
-private val densityActivities =
-    setOf(
-        "com.miui.tsmclient.ui.quick.DoubleClickActivity",
-        "com.miui.tsmclient.ui.CardListActivity",
-        "com.miui.tsmclient.ui.CardHolderEntranceActivity",
-    )

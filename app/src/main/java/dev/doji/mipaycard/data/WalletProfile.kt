@@ -6,103 +6,75 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.content.res.Resources
 import android.hardware.display.DisplayManager
-import android.os.Build
 import android.provider.Settings
+import android.util.Size
 import android.view.Display
 import org.json.JSONArray
 import java.io.IOException
 
 internal const val WALLET_PACKAGE = "com.miui.tsmclient"
 
-/** The external resource contract is pinned to the verified wallet version below. */
-internal data class WalletProfile(
-    val dataDirectory: String,
-    val bankWidth: Int,
-    val bankHeight: Int,
-    val useThemeArt: Boolean,
-    val themeLogoType: String,
-    val problem: String? = null,
-    val densitySignature: String = "",
-)
-
-internal fun readWalletProfile(
+/** Read the installed wallet's resources without restricting its version. */
+internal class WalletProfile(
     context: Context,
-    bankDensityDpi: Int? = null,
-): WalletProfile {
-    val manager = context.packageManager
-    val packageInfo =
+) {
+    private val walletContext: Context
+    val dataDirectory: String
+    val useThemeArt: Boolean
+    val themeLogoType: String
+    val densitySignature: String
+
+    init {
+        val packageInfo =
+            try {
+                context.packageManager.getPackageInfo(WALLET_PACKAGE, 0)
+            } catch (error: PackageManager.NameNotFoundException) {
+                throw IOException("未找到小米智能卡应用", error)
+            }
+        dataDirectory = packageInfo.applicationInfo?.dataDir ?: throw IOException("无法读取小米智能卡的数据目录")
+        walletContext =
+            try {
+                context.createPackageContext(WALLET_PACKAGE, 0)
+            } catch (error: PackageManager.NameNotFoundException) {
+                throw IOException("无法读取小米智能卡资源，请检查安装状态", error)
+            }
+        val resources = walletContext.resources
         try {
-            manager.getPackageInfo(WALLET_PACKAGE, 0)
-        } catch (error: PackageManager.NameNotFoundException) {
-            throw IOException("未找到小米智能卡应用", error)
+            useThemeArt = resources.getBoolean(resources.walletResource("use_theme_card_art", "bool"))
+            themeLogoType = resources.getString(resources.walletResource("use_theme_card_logo_type", "string"))
+        } catch (error: Resources.NotFoundException) {
+            throw IOException("当前小米智能卡版本不适配：缺少更换卡面所需的资源", error)
         }
-    val dataDirectory = packageInfo.applicationInfo?.dataDir ?: throw IOException("无法读取小米智能卡的数据目录")
-    if (packageInfo.versionName != "26.08.28.4.f" || packageInfo.longVersionCode != 4180L) {
-        return WalletProfile(dataDirectory, 0, 0, false, "", "当前小米智能卡版本尚未验证，暂不支持更换卡面")
+        val display =
+            context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+                ?: throw IOException("无法读取主屏显示配置")
+        densitySignature =
+            JSONArray(
+                listOf(
+                    packageInfo.lastUpdateTime,
+                    Settings.Global.getString(context.contentResolver, Settings.Global.BOOT_COUNT),
+                    context.resources.configuration.densityDpi,
+                    display.mode.physicalWidth,
+                    display.mode.physicalHeight,
+                    Settings.Secure.getString(context.contentResolver, "display_density_forced"),
+                    Settings.System.getString(context.contentResolver, "key_screen_zoom_level"),
+                ),
+            ).toString()
     }
-    val walletContext =
-        try {
-            context.createPackageContext(WALLET_PACKAGE, 0)
-        } catch (error: PackageManager.NameNotFoundException) {
-            throw IOException("无法读取小米智能卡资源，请检查安装状态", error)
+
+    fun bankImageSize(densityDpi: Int?): Size {
+        if (densityDpi == null) return Size(0, 0)
+        val configuration = Configuration(walletContext.resources.configuration)
+        configuration.densityDpi = densityDpi
+        val resources = walletContext.createConfigurationContext(configuration).resources
+        return try {
+            Size(
+                resources.getDimensionPixelSize(resources.walletResource("trade_alert_card_image_width", "dimen")),
+                resources.getDimensionPixelSize(resources.walletResource("trade_alert_card_image_height", "dimen")),
+            )
+        } catch (error: Resources.NotFoundException) {
+            throw IOException("当前小米智能卡版本不适配：缺少更换卡面所需的资源", error)
         }
-    val resources =
-        if (bankDensityDpi == null) {
-            walletContext.resources
-        } else {
-            val configuration = Configuration(walletContext.resources.configuration)
-            configuration.densityDpi = bankDensityDpi
-            walletContext.createConfigurationContext(configuration).resources
-        }
-    val display =
-        context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
-            ?: throw IOException("无法读取主屏显示配置")
-    val rawMetrics = context.resources.displayMetrics
-    return try {
-        WalletProfile(
-            dataDirectory,
-            if (bankDensityDpi ==
-                null
-            ) {
-                0
-            } else {
-                resources.getDimensionPixelSize(resources.walletResource("trade_alert_card_image_width", "dimen"))
-            },
-            if (bankDensityDpi ==
-                null
-            ) {
-                0
-            } else {
-                resources.getDimensionPixelSize(resources.walletResource("trade_alert_card_image_height", "dimen"))
-            },
-            resources.getBoolean(resources.walletResource("use_theme_card_art", "bool")),
-            resources.getString(resources.walletResource("use_theme_card_logo_type", "string")),
-            densitySignature =
-                JSONArray(
-                    listOf(
-                        packageInfo.versionName,
-                        packageInfo.longVersionCode,
-                        packageInfo.lastUpdateTime,
-                        dataDirectory,
-                        Build.FINGERPRINT,
-                        Settings.Global.getString(context.contentResolver, Settings.Global.BOOT_COUNT),
-                        rawMetrics.densityDpi,
-                        rawMetrics.xdpi,
-                        rawMetrics.ydpi,
-                        context.resources.configuration.fontScale,
-                        display.mode.physicalWidth,
-                        display.mode.physicalHeight,
-                        display.supportedModes
-                            .map { "${it.physicalWidth}x${it.physicalHeight}" }
-                            .distinct()
-                            .sorted(),
-                        Settings.Secure.getString(context.contentResolver, "display_density_forced"),
-                        Settings.System.getString(context.contentResolver, "key_screen_zoom_level"),
-                    ),
-                ).toString(),
-        )
-    } catch (error: Resources.NotFoundException) {
-        throw IOException("无法读取已验证版本的卡面资源，请检查小米智能卡安装状态", error)
     }
 }
 
