@@ -120,7 +120,7 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     val cardsById = state.cards.associateBy { it.id }
     val orderedIds = cardOrder.filter { it in cardsById } + state.cards.map { it.id }.filter { it !in cardOrder }
     val orderedCards = orderedIds.mapNotNull(cardsById::get)
-    val busy = state.task != CardTask.Idle
+    val busy = state.task != CardTask.Idle || state.restorePreviousCard != null
 
     fun collapseCard() {
         val key = selectedKey ?: return
@@ -180,6 +180,8 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
                     cards = orderedCards,
                     selectedKey = selectedKey,
                     restoringCardId = state.restoringCardId,
+                    restorePreviousCard = state.restorePreviousCard,
+                    onRestoreAnimationFinished = model::finishRestoreAnimation,
                     enabled = !busy,
                     onSelect = { card ->
                         val wasSelected = selectedKey == card.id
@@ -251,6 +253,8 @@ private fun CardStack(
     cards: List<WalletCard>,
     selectedKey: String?,
     restoringCardId: String?,
+    restorePreviousCard: WalletCard?,
+    onRestoreAnimationFinished: () -> Unit,
     enabled: Boolean,
     onSelect: (WalletCard) -> Unit,
     onChange: (WalletCard) -> Unit,
@@ -274,6 +278,8 @@ private fun CardStack(
                                 card = card,
                                 expanded = card.id == selectedKey,
                                 restoring = card.id == restoringCardId,
+                                restorePreviousCard = restorePreviousCard?.takeIf { it.id == card.id },
+                                onRestoreAnimationFinished = onRestoreAnimationFinished,
                                 protectNavigationBar = cards.size == 1,
                                 lookaheadScope = this@LookaheadScope,
                                 enabled = enabled,
@@ -316,6 +322,8 @@ private fun StackedCard(
     card: WalletCard,
     expanded: Boolean,
     restoring: Boolean,
+    restorePreviousCard: WalletCard?,
+    onRestoreAnimationFinished: () -> Unit,
     protectNavigationBar: Boolean,
     lookaheadScope: LookaheadScope,
     enabled: Boolean,
@@ -326,11 +334,14 @@ private fun StackedCard(
     var phase by remember(expanded) {
         mutableStateOf(if (expanded) CardExpansionPhase.Moving else CardExpansionPhase.Stacked)
     }
-    val controlsVisible = phase == CardExpansionPhase.Expanded
+    val restoreMotion = rememberCardRestoreMotion(restoring, restorePreviousCard, expanded, onRestoreAnimationFinished)
+    val restoreAnimating = restoring || restorePreviousCard != null || restoreMotion.phase != CardRestorePhase.Idle
+    val controlsVisible = phase == CardExpansionPhase.Expanded && !restoreAnimating
+    val restoreButtonVisible = phase == CardExpansionPhase.Expanded && restoreAnimating && restoreMotion.showsPreviousCard
     val expansion =
         animateFloatAsState(
             targetValue = if (controlsVisible) 1f else 0f,
-            animationSpec = spring(dampingRatio = CARD_SPRING_DAMPING, stiffness = Spring.StiffnessMediumLow),
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 900f),
             label = "cardControls",
         )
     val bringIntoView = remember { BringIntoViewRequester() }
@@ -348,13 +359,7 @@ private fun StackedCard(
         content = {
             Column(
                 controlsModifier
-                    .then(
-                        if (restoring) {
-                            Modifier.graphicsLayer { alpha = 0f }.clearAndSetSemantics {}
-                        } else {
-                            Modifier
-                        },
-                    ).fillMaxWidth()
+                    .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -366,11 +371,12 @@ private fun StackedCard(
                 )
             }
             CardFaceImage(
-                card,
+                if (restoreMotion.showsPreviousCard) restorePreviousCard ?: card else card,
                 Modifier
                     .animateCardPosition(lookaheadScope) {
                         if (expanded && phase == CardExpansionPhase.Moving) phase = CardExpansionPhase.Expanded
-                    }.shakeWhileRestoring(restoring)
+                    }.restoreCardMotion(restoreMotion)
+                    .shakeWhileRestoring(restoreMotion.phase == CardRestorePhase.Shaking)
                     .clickable(
                         enabled = enabled,
                         interactionSource = null,
@@ -381,7 +387,15 @@ private fun StackedCard(
             )
             Column(
                 modifier =
-                    controlsModifier
+                    Modifier
+                        .graphicsLayer {
+                            alpha =
+                                when {
+                                    restoreButtonVisible -> 1f
+                                    restoreAnimating -> 0f
+                                    else -> expansion.value.coerceIn(0f, 1f)
+                                }
+                        }.then(if (controlsVisible || restoreButtonVisible) Modifier else Modifier.clearAndSetSemantics {})
                         .then(if (protectNavigationBar) Modifier.navigationBarsPadding() else Modifier)
                         .padding(top = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -391,10 +405,10 @@ private fun StackedCard(
                     if (editable != null) {
                         ChangeCardButton(
                             enabled = enabled && controlsVisible,
-                            restoring = restoring,
+                            restoring = restoreAnimating,
                             onChange = onChange,
                             onRestore = if (editable.hasBackup) onRestore else null,
-                            modifier = Modifier.shakeWhileRestoring(restoring),
+                            modifier = Modifier.shakeWhileRestoring(restoreMotion.phase == CardRestorePhase.Shaking),
                         )
                     }
                 }
@@ -410,7 +424,12 @@ private fun StackedCard(
             val progress = expansion.value
             val faceY = if (expanded) header.height else 0
             header.placeRelative(0, faceY - (header.height * progress).roundToInt())
-            actions.placeRelative(0, faceY + face.height - (actions.height * (1f - progress)).roundToInt())
+            val actionsProgress = if (restoreButtonVisible) 1f else progress
+            actions.placeRelative(
+                0,
+                faceY + face.height - (actions.height * (1f - actionsProgress)).roundToInt(),
+                zIndex = if (restoreButtonVisible) 2f else 0f,
+            )
             face.placeRelative(0, faceY, zIndex = 1f)
         }
     }

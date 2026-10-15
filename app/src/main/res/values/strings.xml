@@ -22,7 +22,6 @@
     <string name="collapse">收起</string>
     <string name="operation_failed">操作未完成</string>
     <string name="replacement_success">已更换卡面</string>
-    <string name="restore_success">已恢复原图</string>
     <string name="empty_title">没有已添加的卡片</string>
     <string name="empty_description">请先在小米智能卡中添加卡片。</string>
     <string name="load_required">读取失败，请重试。</string>

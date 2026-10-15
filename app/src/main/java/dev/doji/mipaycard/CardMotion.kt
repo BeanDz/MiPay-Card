@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -38,6 +39,7 @@ internal fun Modifier.shakeWhileRestoring(restoring: Boolean): Modifier {
         }
 
         while (isActive) {
+            withFrameNanos { }
             shake.animateTo(
                 targetValue = Offset(Random.nextFloat() * 2f - 1f, Random.nextFloat() * 2f - 1f),
                 animationSpec = tween(durationMillis = Random.nextInt(8, 17), easing = FastOutSlowInEasing),

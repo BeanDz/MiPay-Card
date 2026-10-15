@@ -34,6 +34,7 @@ internal data class CardScreenState(
     val hasLoaded: Boolean = false,
     val task: CardTask = CardTask.Idle,
     val restoringCardId: String? = null,
+    val restorePreviousCard: WalletCard? = null,
     val replacement: ReplacementPreview? = null,
     val error: String? = null,
     val message: String? = null,
@@ -98,10 +99,14 @@ internal class CardViewModel(
                         it.cards.map { current ->
                             if (current.id == cardId) current.copy(face = CardFace.Editable(image, true)) else current
                         },
-                    message = getApplication<Application>().getString(R.string.restore_success),
+                    restorePreviousCard = card,
                 )
             }
         }
+    }
+
+    fun finishRestoreAnimation() {
+        mutableState.update { it.copy(restorePreviousCard = null) }
     }
 
     fun dismissPreview() {
@@ -122,7 +127,7 @@ internal class CardViewModel(
         restoringCardId: String? = null,
         operation: suspend () -> Unit,
     ) {
-        if (state.value.task != CardTask.Idle) return
+        if (state.value.task != CardTask.Idle || state.value.restorePreviousCard != null) return
         mutableState.update { it.copy(task = task, restoringCardId = restoringCardId, error = null) }
         viewModelScope.launch {
             try {
