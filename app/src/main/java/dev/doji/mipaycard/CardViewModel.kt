@@ -52,7 +52,8 @@ internal class CardViewModel(
 
     fun refresh() =
         launchOperation(CardTask.Scanning) {
-            loadCards()
+            val cards = repository.scan()
+            mutableState.update { it.copy(cards = cards, hasLoaded = true) }
         }
 
     fun prepareReplacement(
@@ -114,11 +115,6 @@ internal class CardViewModel(
 
     fun dismissMessage() {
         mutableState.update { it.copy(message = null) }
-    }
-
-    private suspend fun loadCards() {
-        val cards = repository.scan()
-        mutableState.update { it.copy(cards = cards, hasLoaded = true) }
     }
 
     private fun launchOperation(

@@ -5,9 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -170,39 +169,37 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
         contentWindowInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
         snackbarHost = { SnackbarHost(snackbar, Modifier.navigationBarsPadding()) },
     ) { insets ->
-        Column(Modifier.padding(insets).consumeWindowInsets(insets)) {
-            PullToRefreshBox(
-                isRefreshing = state.task == CardTask.Scanning,
-                onRefresh = model::refresh,
-                modifier = Modifier.fillMaxSize(),
-                indicator = {},
-            ) {
-                if (state.cards.isNotEmpty()) {
-                    CardStack(
-                        cards = orderedCards,
-                        selectedKey = selectedKey,
-                        restoringCardId = state.restoringCardId,
-                        enabled = !busy,
-                        onSelect = { card ->
-                            val wasSelected = selectedKey == card.id
-                            collapseCard()
-                            if (!wasSelected) selectedKey = card.id
-                        },
-                        onChange = {
-                            editingKey = it.id
-                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        },
-                        onRestore = { model.restore(it.id) },
-                    )
-                } else {
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                        if (state.hasLoaded && !busy) {
-                            EmptyCards(onRefresh = model::refresh)
-                        } else if (!state.hasLoaded && !busy) {
-                            Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Text(stringResource(R.string.load_required))
-                                FilledTonalButton(onClick = model::refresh) { Text(stringResource(R.string.retry)) }
-                            }
+        PullToRefreshBox(
+            isRefreshing = state.task == CardTask.Scanning,
+            onRefresh = model::refresh,
+            modifier = Modifier.padding(insets).consumeWindowInsets(insets).fillMaxSize(),
+            indicator = {},
+        ) {
+            if (state.cards.isNotEmpty()) {
+                CardStack(
+                    cards = orderedCards,
+                    selectedKey = selectedKey,
+                    restoringCardId = state.restoringCardId,
+                    enabled = !busy,
+                    onSelect = { card ->
+                        val wasSelected = selectedKey == card.id
+                        collapseCard()
+                        if (!wasSelected) selectedKey = card.id
+                    },
+                    onChange = {
+                        editingKey = it.id
+                        photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onRestore = { model.restore(it.id) },
+                )
+            } else {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    if (state.hasLoaded && !busy) {
+                        EmptyCards(onRefresh = model::refresh)
+                    } else if (!state.hasLoaded && !busy) {
+                        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(stringResource(R.string.load_required))
+                            FilledTonalButton(onClick = model::refresh) { Text(stringResource(R.string.retry)) }
                         }
                     }
                 }
@@ -330,12 +327,12 @@ private fun StackedCard(
         mutableStateOf(if (expanded) CardExpansionPhase.Moving else CardExpansionPhase.Stacked)
     }
     val controlsVisible = phase == CardExpansionPhase.Expanded
-    val transition = updateTransition(controlsVisible, label = "cardExpansion")
     val expansion =
-        transition.animateFloat(
-            transitionSpec = { spring(dampingRatio = CARD_SPRING_DAMPING, stiffness = Spring.StiffnessMediumLow) },
+        animateFloatAsState(
+            targetValue = if (controlsVisible) 1f else 0f,
+            animationSpec = spring(dampingRatio = CARD_SPRING_DAMPING, stiffness = Spring.StiffnessMediumLow),
             label = "cardControls",
-        ) { if (it) 1f else 0f }
+        )
     val bringIntoView = remember { BringIntoViewRequester() }
     LaunchedEffect(expanded, phase) {
         if (!expanded || phase != CardExpansionPhase.Expanded) return@LaunchedEffect
