@@ -168,18 +168,34 @@ class CacheWriteScriptTest {
     }
 
     @Test
-    fun checksOnlyRequestedSafeCacheKeys() {
-        val missing = "b".repeat(64)
-        val unrelated = "c".repeat(64)
-        File(cache, "$unrelated.0").writeText("unrelated")
-        val linked = "d".repeat(64)
-        val linkedTarget = File(cache, "$linked.0").apply { writeText("linked") }
-        Files.createLink(temporary.newFile("linked-alias").apply { delete() }.toPath(), linkedTarget.toPath())
+    fun listsOnlyCacheEntryNames() {
+        val other = "c".repeat(64)
+        File(cache, "$other.0").writeText("other")
+        File(cache, "note.txt").writeText("note")
+        File(cache, "subdirectory.0").mkdir()
 
-        val (exitCode, output) = execute(cacheCandidateKeysScript(wallet.path, setOf(key, missing, linked)))
+        val (exitCode, output) = execute(cacheListScript(wallet.path))
 
         assertEquals(0, exitCode)
-        assertEquals("$key\n", output)
+        assertEquals(setOf(key, other), parseCacheKeys(output.lines()))
+    }
+
+    @Test
+    fun acceptsMissingCacheDirectoryAsEmpty() {
+        assertTrue(cache.deleteRecursively())
+
+        val (exitCode, output) = execute(cacheListScript(wallet.path))
+
+        assertEquals(0, exitCode)
+        assertTrue(parseCacheKeys(output.lines()).isEmpty())
+    }
+
+    @Test
+    fun parsesCacheKeysFromListing() {
+        assertEquals(
+            setOf(key),
+            parseCacheKeys(listOf("$key.0", "$key.0/", "note", "not-a-key.0", "d".repeat(64))),
+        )
     }
 
     @Test

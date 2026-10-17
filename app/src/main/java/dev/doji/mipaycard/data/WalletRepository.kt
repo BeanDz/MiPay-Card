@@ -82,13 +82,7 @@ internal class WalletRepository(
             val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
             if (cards.isEmpty()) return@withContext emptyList()
             val sources = readImageSources(cards, profile, files)
-            val candidates =
-                sources
-                    .filterNotNull()
-                    .flatMap { url ->
-                        walletImageCandidates(url, ImageModel.CustomUrl) + walletImageCandidates(url, ImageModel.PlainUrl)
-                    }.toSet()
-            val keys = files.keys(candidates)
+            val keys = files.cacheKeys()
             val sharedSources = sharedImageSources(sources)
             cards.mapIndexed { index, card ->
                 currentCoroutineContext().ensureActive()

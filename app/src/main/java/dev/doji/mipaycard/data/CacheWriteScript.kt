@@ -43,13 +43,8 @@ internal fun cacheTargetGuard(
         """.trimIndent()
 }
 
-internal fun cacheCandidateKeysScript(
-    walletDataDir: String,
-    candidates: Set<String>,
-): String {
-    require(candidates.all(::validCacheKey)) { "Invalid cache key" }
-    val checks = candidates.sorted().joinToString("\n") { "existing_key ${quoteShell(it)} || exit 41" }
-    return cacheDirectoryGuard(walletDataDir) +
+internal fun cacheListScript(walletDataDir: String): String =
+    cacheDirectoryGuard(walletDataDir) +
         "\n" +
         """
         wallet_root=${'$'}(readlink -f "${'$'}wallet") || exit 41
@@ -58,20 +53,17 @@ internal fun cacheCandidateKeysScript(
         test ! -L "${'$'}wallet_root/cache/image_manager_disk_cache" || exit 41
         test -d "${'$'}wallet_root/cache/image_manager_disk_cache" || exit 0
         validate_directory || exit 41
-        existing_key() {
-            key="${'$'}1"
-            target="${'$'}cache_root/${'$'}key.0"
-            test -f "${'$'}target" || return 0
-            test ! -L "${'$'}target" || return 0
-            resolved=${'$'}(readlink -f "${'$'}target") || return 1
-            test "${'$'}resolved" = "${'$'}target" || return 0
-            links=${'$'}(stat -c '%h' "${'$'}target") || return 1
-            test "${'$'}links" = 1 || return 0
-            printf '%s\n' "${'$'}key"
-        }
-        $checks
+        ls -1p "${'$'}cache_root"
         """.trimIndent()
-}
+
+/** Cache entries are named `<sha-256>.0` by Glide; directories are listed with a trailing slash. */
+internal fun parseCacheKeys(lines: List<String>): Set<String> =
+    lines
+        .asSequence()
+        .filter { !it.endsWith("/") && it.endsWith(".0") }
+        .map { it.removeSuffix(".0") }
+        .filter(::validCacheKey)
+        .toSet()
 
 internal fun cacheWriteScript(
     walletDataDir: String,

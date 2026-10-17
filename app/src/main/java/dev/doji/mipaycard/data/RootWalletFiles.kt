@@ -34,15 +34,13 @@ internal class RootWalletFiles(
             ),
         )
 
-    fun keys(candidates: Set<String>): Set<String> {
-        if (candidates.isEmpty()) return emptySet()
-        val output =
+    fun cacheKeys(): Set<String> =
+        parseCacheKeys(
             command(
-                cacheCandidateKeysScript(walletDataDir, candidates),
+                cacheListScript(walletDataDir),
                 "无法读取小米智能卡缓存，缓存路径可能已失效",
-            )
-        return output.filter(::validCacheKey).toSet()
-    }
+            ),
+        )
 
     fun read(key: String): File {
         validateKey(key)
