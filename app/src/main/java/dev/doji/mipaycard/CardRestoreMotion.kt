@@ -21,8 +21,7 @@ internal enum class CardRestorePhase {
     Idle,
     Shaking,
     Bursting,
-    Popping,
-    Returning,
+    Appearing,
 }
 
 internal class CardRestoreMotion {
@@ -62,9 +61,8 @@ internal fun rememberCardRestoreMotion(
         motion.phase = CardRestorePhase.Bursting
         motion.burst.animateTo(1f, tween(90, easing = FastOutLinearInEasing))
         motion.scale.snapTo(0.86f)
-        motion.phase = CardRestorePhase.Popping
+        motion.phase = CardRestorePhase.Appearing
         motion.scale.animateTo(1.24f, tween(120, easing = FastOutSlowInEasing))
-        motion.phase = CardRestorePhase.Returning
         motion.scale.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = 1000f))
         motion.phase = CardRestorePhase.Idle
         finished.value()

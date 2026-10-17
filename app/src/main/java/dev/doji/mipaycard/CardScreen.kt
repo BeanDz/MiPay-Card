@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.aspectRatio
@@ -113,7 +114,7 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     var cardOrder by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val cardsById = state.cards.associateBy { it.id }
     val orderedIds = cardOrder.filter { it in cardsById } + state.cards.map { it.id }.filter { it !in cardOrder }
-    val orderedCards = orderedIds.mapNotNull(cardsById::get)
+    val orderedCards = orderedIds.map(cardsById::getValue)
     val busy = state.task != CardTask.Idle || state.restorePreviousCard != null
 
     fun collapseCard() {
@@ -186,7 +187,8 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
                         editingKey = it.id
                         photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
-                    onRestore = { model.restore(it.id) },
+                    onRestore = model::restore,
+                    onPreviewNotification = model::previewNotification,
                 )
             } else {
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -212,14 +214,14 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
                     Image(
                         replacement.bitmap.asImageBitmap(),
                         contentDescription = stringResource(R.string.card_preview),
-                        modifier = Modifier.fillMaxWidth().aspectRatio(replacement.image.width.toFloat() / replacement.image.height),
+                        modifier = Modifier.fillMaxWidth().aspectRatio(replacement.bitmap.width.toFloat() / replacement.bitmap.height),
                         contentScale = ContentScale.Fit,
                     )
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             },
             confirmButton = {
-                TextButton(onClick = model::applyReplacement, enabled = !busy) {
+                TextButton(onClick = { model.applyReplacement(replacement) }, enabled = !busy) {
                     Text(stringResource(R.string.apply))
                 }
             },
@@ -253,6 +255,7 @@ private fun CardStack(
     onSelect: (WalletCard) -> Unit,
     onChange: (WalletCard) -> Unit,
     onRestore: (WalletCard) -> Unit,
+    onPreviewNotification: (String) -> Unit,
 ) {
     val scrollState = rememberScrollState()
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -280,6 +283,7 @@ private fun CardStack(
                                 onSelect = { onSelect(card) },
                                 onChange = { onChange(card) },
                                 onRestore = { onRestore(card) },
+                                onPreviewNotification = onPreviewNotification,
                             )
                         }
                     }
@@ -324,6 +328,7 @@ private fun StackedCard(
     onSelect: () -> Unit,
     onChange: () -> Unit,
     onRestore: () -> Unit,
+    onPreviewNotification: (String) -> Unit,
 ) {
     var arrived by remember(expanded) { mutableStateOf(false) }
     val restoreMotion = rememberCardRestoreMotion(restoring, restorePreviousCard, expanded, onRestoreAnimationFinished)
@@ -366,7 +371,7 @@ private fun StackedCard(
                 if (restoreMotion.showsPreviousCard) restorePreviousCard ?: card else card,
                 Modifier
                     .animateCardPosition(lookaheadScope) {
-                        if (expanded && !arrived) arrived = true
+                        if (expanded) arrived = true
                     }.restoreCardMotion(restoreMotion)
                     .shakeWhileRestoring(restoreMotion.phase == CardRestorePhase.Shaking)
                     .clickable(
@@ -393,7 +398,16 @@ private fun StackedCard(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 (card.face as? CardFace.Unavailable)?.let { Text(it.reason) }
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    card.notificationAid?.let { aid ->
+                        TextButton(onClick = { onPreviewNotification(aid) }, enabled = enabled && controlsVisible) {
+                            Text(stringResource(R.string.notification_preview))
+                        }
+                    }
                     if (editable != null) {
                         ChangeCardButton(
                             enabled = enabled && controlsVisible,

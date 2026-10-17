@@ -13,8 +13,6 @@ import android.net.Uri
 import androidx.core.graphics.createBitmap
 import java.io.File
 import java.io.IOException
-import java.security.DigestOutputStream
-import java.security.MessageDigest
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -32,18 +30,7 @@ internal fun readCachedImage(
             }
         }
     val preview = BitmapFactory.decodeFile(file.path, options) ?: throw IOException("无法解码卡面缓存")
-    return CachedImage(key, bounds.outWidth, bounds.outHeight, fingerprint(file), preview)
-}
-
-internal fun validateCardImage(
-    file: File,
-    width: Int,
-    height: Int,
-) {
-    val bounds = cardImageBounds(file)
-    if (bounds.outWidth != width || bounds.outHeight != height) throw IOException("卡面尺寸已变化，请刷新后重试")
-    val bitmap = BitmapFactory.decodeFile(file.path) ?: throw IOException("原始卡面备份或缓存已损坏")
-    bitmap.recycle()
+    return CachedImage(key, bounds.outWidth, bounds.outHeight, preview)
 }
 
 internal fun prepareCardImage(
@@ -108,12 +95,10 @@ internal fun prepareCardImage(
 internal fun saveCardImage(
     bitmap: Bitmap,
     file: File,
-): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    DigestOutputStream(file.outputStream(), digest).use { output ->
+) {
+    file.outputStream().use { output ->
         if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("无法保存新卡面")
     }
-    return digest.digest().toHexString()
 }
 
 private fun cardImageBounds(file: File): BitmapFactory.Options {
@@ -125,12 +110,4 @@ private fun cardImageBounds(file: File): BitmapFactory.Options {
         throw IOException("卡面图片格式或尺寸不受支持")
     }
     return bounds
-}
-
-internal fun fingerprint(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    file.forEachBlock(8192) { buffer, count ->
-        digest.update(buffer, 0, count)
-    }
-    return digest.digest().toHexString()
 }

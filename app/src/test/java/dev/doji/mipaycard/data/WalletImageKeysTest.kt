@@ -5,6 +5,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WalletImageKeysTest {
+    @Test
+    fun notificationSeparatesOriginalDataFromTransformedBitmap() {
+        val keys = walletNotificationImageKeys("https://example.com/card.png")
+
+        assertEquals("cf9a2c3f49d2ea6f2942d7d37ac113c828a253f8124121cfd6e8d191ef3e8919", keys.data)
+        assertEquals("6290f37419621694b12b061472beaf1f911e6af2454f80ff02c23cdd04732c29", keys.resource)
+        assertTrue(keys.resource !in walletImageCandidates("https://example.com/card.png", ImageModel.PlainUrl))
+    }
+
+    @Test
+    fun notificationRetainsSignedQueryAndUpgradesHttp() {
+        val keys = walletNotificationImageKeys("http://example.com/card.png?GalaxyAccessKeyId=token&Expires=10")
+
+        assertEquals("143d40aea67e91285f9222b5c2c92f9d19be431008df4d8d4afbe97820392a1b", keys.data)
+        assertEquals("dafb2c28e873c96979bd9fc548c10c72294dfd254d2cba29233350bb3f159c64", keys.resource)
+    }
+
     // Independent digest fixtures use Glide's original-size RESOURCE and DATA byte sequences.
     @Test
     fun matchesDecodedResourceClassesThenDataWithSignedMd5Source() {

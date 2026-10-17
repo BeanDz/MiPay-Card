@@ -1,6 +1,7 @@
 package dev.doji.mipaycard.data
 
-import android.os.Process
+import android.content.Context
+import android.content.pm.PackageManager
 import com.topjohnwu.superuser.NoShellException
 import com.topjohnwu.superuser.Shell
 import java.io.File
@@ -9,9 +10,16 @@ import java.nio.file.Files
 
 /** Callers run root work off the UI thread and own every returned temporary file. */
 internal class RootWalletFiles(
-    private val cacheDir: File,
-    private val walletDataDir: String,
+    context: Context,
 ) {
+    private val cacheDir = context.cacheDir
+    private val walletDataDir =
+        try {
+            context.packageManager.getApplicationInfo(WALLET_PACKAGE, 0).dataDir
+        } catch (error: PackageManager.NameNotFoundException) {
+            throw IOException("未找到小米智能卡应用", error)
+        }
+
     fun displayResolutionOverride(): String =
         command(
             "getprop persist.sys.miui_resolution 2>&1",
@@ -43,18 +51,10 @@ internal class RootWalletFiles(
         )
 
     fun read(key: String): File {
-        validateKey(key)
         val temporary = File.createTempFile("wallet-", ".cache", cacheDir)
         try {
             command(
-                cacheTargetGuard(walletDataDir, key) +
-                    "\n" +
-                    """
-                    validate_target || exit 41
-                    cat "${'$'}target" > ${quoteShell(temporary.path)} &&
-                    chown ${Process.myUid()}:${Process.myUid()} ${quoteShell(temporary.path)} &&
-                    chmod 600 ${quoteShell(temporary.path)}
-                    """.trimIndent(),
+                "cat ${quoteShell("$walletDataDir/cache/image_manager_disk_cache/$key.0")} > ${quoteShell(temporary.path)}",
                 "无法读取卡面缓存，请重新扫描",
             )
             return temporary
@@ -65,74 +65,57 @@ internal class RootWalletFiles(
     }
 
     fun write(
-        key: String,
-        source: File,
-        previous: File,
+        writes: List<CacheWrite>,
+        invalidation: String?,
     ) {
-        validateKey(key)
         command(
-            cacheWriteScript(walletDataDir, key, source.path, previous.path),
+            cacheWriteScript(walletDataDir, writes, invalidation),
             "无法写入卡面缓存",
-            transaction = true,
         )
     }
 
-    private fun validateKey(key: String) {
-        if (!validCacheKey(key)) throw IOException("无效的卡面缓存标识")
-    }
-
-    private fun command(
-        script: String,
-        description: String,
-        transaction: Boolean = false,
-    ): List<String> {
-        val cached = Shell.getCachedShell()
-        if (cached != null && !cached.isRoot) {
-            try {
-                cached.close()
-            } catch (error: IOException) {
-                throw IOException("无法重试 root 授权，请重新打开应用", error)
-            }
-        }
-        val shell =
-            try {
-                Shell.getShell()
-            } catch (error: NoShellException) {
-                throw IOException("无法启动 root shell，请检查 su 授权", error)
-            }
-        if (!shell.isRoot) {
-            throw IOException("应用未获得 root 权限，请在 root 管理器中授权；ADB root 无法替代应用 su 授权")
-        }
-        val output = mutableListOf<String>()
-        val result =
-            shell
-                .newJob()
-                .add("(\n$script\n)")
-                .to(output, null)
-                .exec()
-        if (!result.isSuccess) {
-            val reason =
-                if (transaction) {
-                    transactionFailures[result.code] ?: description
-                } else {
-                    description
-                }
-            // Provider output and root diagnostics can contain private wallet data.
-            throw IOException("$reason（退出码 ${result.code}）")
-        }
-        return output
-    }
-
-    private companion object {
-        val transactionFailures =
-            mapOf(
-                41 to "缓存路径不安全或已失效，请重新扫描",
-                42 to "卡面缓存已发生变化，请重新选择图片",
-                43 to "无法确认卡面缓存的文件属性，未写入",
-                44 to "写入失败，已自动回滚到操作前的卡面",
-                45 to "写入失败，自动回滚也失败；原始备份仍保留在应用中",
-                46 to "无法停止小米智能卡，未写入",
+    companion object {
+        fun previewNotification(aid: String) {
+            command(
+                notificationPreviewScript(aid),
+                "无法预览通知，请确认已开启简洁刷卡，并在钱包中选中了这张卡",
             )
+        }
+
+        private fun command(
+            script: String,
+            description: String,
+        ): List<String> {
+            val cached = Shell.getCachedShell()
+            if (cached != null && !cached.isRoot) {
+                try {
+                    cached.close()
+                } catch (error: IOException) {
+                    throw IOException("无法重试 root 授权，请重新打开应用", error)
+                }
+            }
+            val shell =
+                try {
+                    Shell.getShell()
+                } catch (error: NoShellException) {
+                    throw IOException("无法启动 root shell，请检查 su 授权", error)
+                }
+            if (!shell.isRoot) {
+                throw IOException("应用未获得 root 权限，请在 root 管理器中授权；ADB root 无法替代应用 su 授权")
+            }
+            val output = mutableListOf<String>()
+            val result =
+                shell
+                    .newJob()
+                    .add("(\n$script\n)")
+                    .to(output, null)
+                    .exec()
+            if (!result.isSuccess) {
+                // Provider output and root diagnostics can contain private wallet data.
+                throw IOException("$description（退出码 ${result.code}）")
+            }
+            return output
+        }
 
         init {
             Shell.setDefaultBuilder(

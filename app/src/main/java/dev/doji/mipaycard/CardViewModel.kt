@@ -5,27 +5,26 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import dev.doji.mipaycard.data.CachedImage
 import dev.doji.mipaycard.data.CardFace
+import dev.doji.mipaycard.data.RootWalletFiles
 import dev.doji.mipaycard.data.WalletCard
 import dev.doji.mipaycard.data.WalletRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 
 internal enum class CardTask {
     Idle,
     Scanning,
-    Preparing,
-    Applying,
-    Restoring,
+    Working,
 }
 
 internal data class ReplacementPreview(
-    val cardId: String,
-    val image: CachedImage,
+    val card: WalletCard,
     val bitmap: Bitmap,
 )
 
@@ -57,29 +56,35 @@ internal class CardViewModel(
             mutableState.update { it.copy(cards = cards, hasLoaded = true) }
         }
 
+    fun previewNotification(aid: String) =
+        launchOperation(CardTask.Working) {
+            withContext(Dispatchers.IO) {
+                RootWalletFiles.previewNotification(aid)
+            }
+        }
+
     fun prepareReplacement(
         cardId: String,
         uri: Uri,
     ) {
         val card = state.value.cards.find { it.id == cardId } ?: return
         val face = card.face as? CardFace.Editable ?: return
-        launchOperation(CardTask.Preparing) {
+        launchOperation(CardTask.Working) {
             val bitmap = repository.prepareReplacement(face.image, uri)
             mutableState.update {
-                it.copy(replacement = ReplacementPreview(card.id, face.image, bitmap))
+                it.copy(replacement = ReplacementPreview(card, bitmap))
             }
         }
     }
 
-    fun applyReplacement() {
-        val replacement = state.value.replacement ?: return
-        launchOperation(CardTask.Applying) {
-            val image = repository.replace(replacement.cardId, replacement.image, replacement.bitmap)
+    fun applyReplacement(replacement: ReplacementPreview) {
+        launchOperation(CardTask.Working) {
+            val image = repository.replace(replacement.card, replacement.bitmap)
             mutableState.update {
                 it.copy(
                     cards =
                         it.cards.map { card ->
-                            if (card.id == replacement.cardId) card.copy(face = CardFace.Editable(image, true)) else card
+                            if (card.id == replacement.card.id) card.copy(face = CardFace.Editable(image, true)) else card
                         },
                     replacement = null,
                     message = getApplication<Application>().getString(R.string.replacement_success),
@@ -88,16 +93,14 @@ internal class CardViewModel(
         }
     }
 
-    fun restore(cardId: String) {
-        val card = state.value.cards.find { it.id == cardId } ?: return
-        val face = card.face as? CardFace.Editable ?: return
-        launchOperation(CardTask.Restoring, restoringCardId = cardId) {
-            val image = repository.restore(cardId, face.image)
+    fun restore(card: WalletCard) {
+        launchOperation(CardTask.Working, restoringCardId = card.id) {
+            val image = repository.restore(card)
             mutableState.update {
                 it.copy(
                     cards =
                         it.cards.map { current ->
-                            if (current.id == cardId) current.copy(face = CardFace.Editable(image, true)) else current
+                            if (current.id == card.id) current.copy(face = CardFace.Editable(image, true)) else current
                         },
                     restorePreviousCard = card,
                 )

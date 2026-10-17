@@ -60,8 +60,7 @@ internal fun ChangeCardButton(
                     if (onRestore != null) stateDescription = holdDescription
                     if (enabled && onRestore != null) {
                         onLongClick(label = restoreLabel) {
-                            val restore = restoreCallback.value ?: return@onLongClick false
-                            restore()
+                            onRestore()
                             true
                         }
                     }

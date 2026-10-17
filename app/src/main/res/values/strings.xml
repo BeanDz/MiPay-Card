@@ -26,4 +26,5 @@
     <string name="empty_description">请先在小米智能卡中添加卡片。</string>
     <string name="load_required">读取失败，请重试。</string>
     <string name="retry">重试</string>
+    <string name="notification_preview">触发通知</string>
 </resources>

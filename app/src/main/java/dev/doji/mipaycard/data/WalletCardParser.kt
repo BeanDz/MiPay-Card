@@ -33,6 +33,7 @@ internal sealed interface CardArt {
 
 internal data class WalletCardInfo(
     val id: String,
+    val aid: String?,
     val name: String,
     val kind: CardKind,
     val art: CardArt,
@@ -173,7 +174,7 @@ private fun parseWalletCard(
                     onlineArt(source?.let { optionalString(it, "cardArt") }.orEmpty())
                 }
             }
-        return WalletCardInfo(cardId(type, cardIdentifier(json, kind) ?: aid), name, kind, art)
+        return WalletCardInfo(cardId(type, cardIdentifier(json, kind) ?: aid), aid, name, kind, art)
     } catch (error: JSONException) {
         return malformedCard(type, json.toString(), json, kind)
     } catch (error: URISyntaxException) {
@@ -196,11 +197,12 @@ private fun transitArt(
 ): CardArt {
     if (ui == null) return CardArt.Unknown
     if (useThemeArt) {
+        val value = ui.opt("themeFgRules")
         val rules =
-            when (val value = ui.opt("themeFgRules")) {
-                null, JSONObject.NULL -> null
-                is JSONObject -> value
-                is String -> if (value.isEmpty()) null else JSONObject(value)
+            when {
+                value == null || value === JSONObject.NULL -> null
+                value is JSONObject -> value
+                value is String -> if (value.isEmpty()) null else JSONObject(value)
                 else -> throw JSONException("Invalid theme foreground rules")
             }
         if (rules != null && optionalString(rules, themeLogoType).isNotEmpty()) return CardArt.Native
@@ -274,7 +276,14 @@ private fun malformedCard(
         json
             ?.let { value -> displayName(type, kind) { key -> value.opt(key) as? String ?: "" } }
             ?.takeIf { it.isNotBlank() }
-    return WalletCardInfo(cardId(type, cardIdentifier(json, kind) ?: serialized), name ?: "无法识别的卡片", kind, CardArt.Unknown, problem)
+    return WalletCardInfo(
+        cardId(type, cardIdentifier(json, kind) ?: serialized),
+        null,
+        name ?: "无法识别的卡片",
+        kind,
+        CardArt.Unknown,
+        problem,
+    )
 }
 
 private fun cardIdentifier(
@@ -300,7 +309,7 @@ private fun optionalString(
     json: JSONObject,
     key: String,
 ): String {
-    if (!json.has(key) || json.isNull(key)) return ""
+    if (json.isNull(key)) return ""
     val value = json.get(key)
     if (value !is String) throw JSONException("Invalid string field")
     return value

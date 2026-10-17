@@ -10,28 +10,50 @@ internal enum class ImageModel {
     PlainUrl,
 }
 
+internal data class NotificationImageKeys(
+    val data: String,
+    val resource: String,
+)
+
+internal fun walletNotificationImageKeys(url: String): NotificationImageKeys {
+    val source = walletImageSourceIdentity(url, ImageModel.PlainUrl).toByteArray(Charsets.UTF_8)
+    return NotificationImageKeys(
+        MessageDigest.getInstance("SHA-256").digest(source).toHexString(),
+        walletResourceKey(source, "android.graphics.Bitmap", "cardTransformation_v2"),
+    )
+}
+
 /** Matches DATA and original-size RESOURCE keys for the selected wallet image model. */
 internal fun walletImageCandidates(
     url: String,
     model: ImageModel,
 ): List<String> {
     val source = walletImageSourceIdentity(url, model).toByteArray(Charsets.UTF_8)
+    // Glide hashes the decoded class before transcoding Bitmap to the requested Drawable.
+    val resourceClasses = listOf("android.graphics.drawable.BitmapDrawable", "android.graphics.Bitmap")
+    return resourceClasses.map { resourceClass ->
+        walletResourceKey(source, resourceClass)
+    } + MessageDigest.getInstance("SHA-256").digest(source).toHexString()
+}
+
+private fun walletResourceKey(
+    source: ByteArray,
+    resourceClass: String,
+    transformation: String = "",
+): String {
     val originalSize =
         ByteBuffer
             .allocate(8)
             .putInt(Int.MIN_VALUE)
             .putInt(Int.MIN_VALUE)
             .array()
-    // Glide hashes the decoded class before transcoding Bitmap to the requested Drawable.
-    val resourceClasses = listOf("android.graphics.drawable.BitmapDrawable", "android.graphics.Bitmap")
-    // EmptySignature and the default transformation/options contribute no bytes.
-    return resourceClasses.map { resourceClass ->
-        val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(source)
-        digest.update(originalSize)
-        digest.update(resourceClass.toByteArray(Charsets.UTF_8))
-        digest.digest().toHexString()
-    } + MessageDigest.getInstance("SHA-256").digest(source).toHexString()
+    // EmptySignature and the default options contribute no bytes.
+    val digest = MessageDigest.getInstance("SHA-256")
+    digest.update(source)
+    digest.update(originalSize)
+    digest.update(transformation.toByteArray(Charsets.UTF_8))
+    digest.update(resourceClass.toByteArray(Charsets.UTF_8))
+    return digest.digest().toHexString()
 }
 
 internal fun walletImageSourceIdentity(

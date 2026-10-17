@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -28,11 +27,9 @@ internal class WalletRepository(
         withContext(Dispatchers.IO) {
             val original = backupFile(expected.key)
             if (original.exists()) return@withContext prepareCardImage(context, expected, uri, original)
-            val profile = WalletProfile(context)
-            val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
+            val files = RootWalletFiles(context)
             val current = files.read(expected.key)
             try {
-                requireFingerprint(expected, current)
                 prepareCardImage(context, expected, uri, current)
             } finally {
                 Files.deleteIfExists(current.toPath())
@@ -40,45 +37,34 @@ internal class WalletRepository(
         }
 
     suspend fun replace(
-        cardId: String,
-        expected: CachedImage,
+        card: WalletCard,
         bitmap: Bitmap,
     ): CachedImage =
         withContext(Dispatchers.IO) {
-            if (bitmap.width != expected.width || bitmap.height != expected.height) {
-                throw IOException("新卡面的尺寸与原卡面不一致")
-            }
-            val files = validatedFiles(cardId, expected)
+            val image = (card.face as CardFace.Editable).image
             val replacement = File.createTempFile("replacement-", ".png", context.cacheDir)
             try {
-                val replacementFingerprint = saveCardImage(bitmap, replacement)
-                writeImage(files, expected, replacement)
-                CachedImage(expected.key, expected.width, expected.height, replacementFingerprint, bitmap)
+                saveCardImage(bitmap, replacement)
+                writeImage(card, replacement, restoring = false)
+                image.copy(preview = bitmap)
             } finally {
                 Files.deleteIfExists(replacement.toPath())
             }
         }
 
-    suspend fun restore(
-        cardId: String,
-        expected: CachedImage,
-    ): CachedImage =
+    suspend fun restore(card: WalletCard): CachedImage =
         withContext(Dispatchers.IO) {
-            val files = validatedFiles(cardId, expected)
-            val original = backupFile(expected.key)
-            if (!original.isFile) throw IOException("这张卡还没有原始卡面备份")
-            val restored = readCachedImage(expected.key, original)
-            if (restored.width != expected.width || restored.height != expected.height) {
-                throw IOException("卡面尺寸已变化，请刷新后重试")
-            }
-            writeImage(files, expected, original)
+            val image = (card.face as CardFace.Editable).image
+            val original = backupFile(image.key)
+            val restored = readCachedImage(image.key, original)
+            writeImage(card, original, restoring = true)
             restored
         }
 
     suspend fun scan(): List<WalletCard> =
         withContext(Dispatchers.IO) {
             val profile = WalletProfile(context)
-            val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
+            val files = RootWalletFiles(context)
             val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
             if (cards.isEmpty()) return@withContext emptyList()
             val sources = readImageSources(cards, profile, files)
@@ -94,7 +80,12 @@ internal class WalletRepository(
                     } else {
                         CardFace.Unavailable(problem)
                     }
-                WalletCard(card.id, card.name, card.kind, face)
+                val notificationAid = card.aid.takeIf { card.kind == CardKind.Transit || card.kind == CardKind.Door }
+                val notificationImageKeys =
+                    source
+                        ?.takeIf { card.kind == CardKind.Transit || card.kind == CardKind.Door || card.kind == CardKind.CarKey }
+                        ?.let(::walletNotificationImageKeys)
+                WalletCard(card.id, card.name, card.kind, face, notificationAid, notificationImageKeys)
             }
         }
 
@@ -173,13 +164,7 @@ internal class WalletRepository(
                         image.preview,
                     )
                 }
-                val original = backupFile(key)
-                try {
-                    if (original.exists()) validateCardImage(original, image.width, image.height)
-                } catch (error: IOException) {
-                    return CardFace.Unavailable(error.message ?: "原始卡面备份已损坏", image.preview)
-                }
-                return CardFace.Editable(image, original.isFile)
+                return CardFace.Editable(image, backupFile(key).isFile)
             }
         }
         val reason =
@@ -206,75 +191,45 @@ internal class WalletRepository(
         }
     }
 
-    private fun validatedFiles(
-        cardId: String,
-        expected: CachedImage,
-    ): RootWalletFiles {
-        val profile = WalletProfile(context)
-        val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
-        val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
-        val cardIndex = cards.indexOfFirst { it.id == cardId }
-        if (cardIndex < 0) throw IOException("这张卡已不在刷卡列表中，请刷新后重试")
-        val card = cards[cardIndex]
-        if (card.problem != null) throw IOException(card.problem)
-        val sources = readImageSources(cards, profile, files)
-        val source = sources[cardIndex]
-        val problem = unsupportedArtReason(card.art, source)
-        if (problem != null) throw IOException(problem)
-        val sourceIdentity = walletImageSourceIdentity(source!!, ImageModel.CustomUrl)
-        if (sourceIdentity in sharedImageSources(sources)) {
-            throw IOException("多张卡共用这张卡面，暂不支持单独更换")
-        }
-        if (expected.key !in walletImageCandidates(source, ImageModel.CustomUrl)) {
-            throw IOException("这张卡的卡面已发生变化，请刷新后重新选择图片")
-        }
-        return files
-    }
-
-    private suspend fun writeImage(
-        files: RootWalletFiles,
-        image: CachedImage,
+    private fun writeImage(
+        card: WalletCard,
         replacement: File,
+        restoring: Boolean,
     ) {
-        currentCoroutineContext().ensureActive()
-        // Once commit starts, cancellation must not separate the write from rollback and cleanup.
-        withContext(NonCancellable) {
-            val current = files.read(image.key)
-            try {
-                requireFingerprint(image, current)
-                saveOriginal(image, current)
-                files.write(image.key, replacement, current)
-            } finally {
-                Files.deleteIfExists(current.toPath())
+        val files = RootWalletFiles(context)
+        val image = (card.face as CardFace.Editable).image
+        if (!restoring) saveOriginal(files, image.key)
+        val writes = mutableListOf(CacheWrite(image.key, replacement.path))
+        val notification = card.notificationImageKeys
+        if (notification != null) {
+            val original = backupFile(notification.data)
+            if (restoring) {
+                writes.add(CacheWrite(notification.data, if (original.exists()) original.path else replacement.path))
+            } else {
+                // Glide ignores files created without an existing journal entry.
+                if (notification.data !in files.cacheKeys()) {
+                    throw IOException("通知卡面缓存缺失，请先触发通知或在小米智能卡中重新加载卡面")
+                }
+                saveOriginal(files, notification.data)
+                writes.add(CacheWrite(notification.data, replacement.path))
             }
         }
+        files.write(writes, notification?.resource)
     }
 
     private fun saveOriginal(
-        image: CachedImage,
-        current: File,
+        files: RootWalletFiles,
+        key: String,
     ) {
-        val original = backupFile(image.key)
-        if (original.exists()) {
-            validateCardImage(original, image.width, image.height)
-            return
-        }
+        val original = backupFile(key)
+        if (original.exists()) return
         if (!originals.isDirectory && !originals.mkdirs()) throw IOException("无法创建原始卡面备份目录")
-        val staging = File.createTempFile("original-", ".cache", originals)
+        val current = files.read(key)
         try {
-            current.copyTo(staging, overwrite = true)
-            validateCardImage(staging, image.width, image.height)
-            Files.move(staging.toPath(), original.toPath())
+            current.copyTo(original)
         } finally {
-            Files.deleteIfExists(staging.toPath())
+            Files.deleteIfExists(current.toPath())
         }
-    }
-
-    private fun requireFingerprint(
-        image: CachedImage,
-        current: File,
-    ) {
-        if (fingerprint(current) != image.fingerprint) throw IOException("卡面缓存已发生变化，请刷新后重试")
     }
 
     private fun backupFile(key: String) = File(originals, "$key.original")

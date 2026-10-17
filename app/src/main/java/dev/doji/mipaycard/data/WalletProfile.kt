@@ -19,7 +19,6 @@ internal class WalletProfile(
     context: Context,
 ) {
     private val walletContext: Context
-    val dataDirectory: String
     val useThemeArt: Boolean
     val themeLogoType: String
     val densitySignature: String
@@ -31,7 +30,6 @@ internal class WalletProfile(
             } catch (error: PackageManager.NameNotFoundException) {
                 throw IOException("未找到小米智能卡应用", error)
             }
-        dataDirectory = packageInfo.applicationInfo?.dataDir ?: throw IOException("无法读取小米智能卡的数据目录")
         walletContext =
             try {
                 context.createPackageContext(WALLET_PACKAGE, 0)
@@ -41,7 +39,8 @@ internal class WalletProfile(
         val resources = walletContext.resources
         try {
             useThemeArt = resources.getBoolean(resources.walletResource("use_theme_card_art", "bool"))
-            themeLogoType = resources.getString(resources.walletResource("use_theme_card_logo_type", "string"))
+            themeLogoType =
+                if (useThemeArt) resources.getString(resources.walletResource("use_theme_card_logo_type", "string")) else ""
         } catch (error: Resources.NotFoundException) {
             throw IOException("当前小米智能卡版本不适配：缺少更换卡面所需的资源", error)
         }
@@ -82,8 +81,4 @@ internal class WalletProfile(
 private fun Resources.walletResource(
     name: String,
     type: String,
-): Int {
-    val id = getIdentifier(name, type, WALLET_PACKAGE)
-    if (id == 0) throw Resources.NotFoundException("Missing wallet resource $type/$name")
-    return id
-}
+): Int = getIdentifier(name, type, WALLET_PACKAGE)

@@ -6,7 +6,6 @@ internal data class CachedImage(
     val key: String,
     val width: Int,
     val height: Int,
-    val fingerprint: String,
     val preview: Bitmap,
 )
 
@@ -27,4 +26,6 @@ internal data class WalletCard(
     val name: String,
     val kind: CardKind,
     val face: CardFace,
+    val notificationAid: String?,
+    val notificationImageKeys: NotificationImageKeys?,
 )
