@@ -4,7 +4,7 @@ ktlint = "1.8.0"
 
 [tasks.setup]
 description = "Configure the Android SDK"
-run = "zsh scripts/setup.zsh"
+run = "sh scripts/setup.sh"
 
 [tasks.build]
 description = "Build the debug APK"
