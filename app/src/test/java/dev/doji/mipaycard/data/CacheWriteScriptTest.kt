@@ -55,6 +55,19 @@ class CacheWriteScriptTest {
                 esac
                 """.trimIndent(),
             )
+        } else {
+            // Linux coreutils cannot read an SELinux context without SELinux; Android's stat can.
+            executable(
+                "stat",
+                """
+                test "${'$'}1" = -c || exit 1
+                case "${'$'}2" in
+                    '%h') exec /usr/bin/stat -c '%h' "${'$'}3" ;;
+                    '%u:%g:%a:%C:%d:%i:%h') exec /usr/bin/stat -c '%u:%g:%a:?:%d:%i:%h' "${'$'}3" ;;
+                    *) exit 1 ;;
+                esac
+                """.trimIndent(),
+            )
         }
     }
 
