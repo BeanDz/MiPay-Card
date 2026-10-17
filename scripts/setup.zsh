@@ -10,13 +10,17 @@ if [[ -z "$project_sdk" ]]; then
     exit 1
 fi
 
-android_cli=$project_sdk/cmdline-tools/latest/bin/android
-if [[ ! -x "$android_cli" ]]; then
-    print -u2 "Install Android SDK Command-line Tools (latest) through Android Studio."
+sdkmanager=$(command -v sdkmanager || true)
+if [[ -z "$sdkmanager" ]]; then
+    sdkmanager=$project_sdk/cmdline-tools/latest/bin/sdkmanager
+fi
+if [[ ! -x "$sdkmanager" ]]; then
+    sdkmanager=${project_sdk}/cmdline-tools/*/bin/sdkmanager(N[1])
+fi
+if [[ ! -x "$sdkmanager" ]]; then
+    print -u2 "Install Android SDK Command-line Tools through Android Studio."
     exit 1
 fi
 
-for package in 'platforms;android-37.0' 'build-tools;37.0.0' 'platform-tools'; do
-    "$android_cli" --sdk="$project_sdk" sdk install "$package" < /dev/null
-done
+"$sdkmanager" --sdk_root="$project_sdk" 'platforms;android-37.0' 'build-tools;37.0.0' 'platform-tools' < /dev/null
 print -r -- "sdk.dir=$project_sdk" > local.properties
