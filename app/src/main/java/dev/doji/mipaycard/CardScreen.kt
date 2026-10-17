@@ -79,12 +79,6 @@ import dev.doji.mipaycard.data.CardKind
 import dev.doji.mipaycard.data.WalletCard
 import kotlin.math.roundToInt
 
-private enum class CardExpansionPhase {
-    Stacked,
-    Moving,
-    Expanded,
-}
-
 private val cardKindLabels =
     mapOf(
         CardKind.Transit to R.string.card_kind_transit,
@@ -133,7 +127,7 @@ internal fun CardScreen(model: CardViewModel = viewModel()) {
     LaunchedEffect(state.cards, state.hasLoaded) {
         if (!state.hasLoaded) return@LaunchedEffect
         cardOrder = orderedIds
-        if (state.cards.none { it.id == selectedKey }) selectedKey = null
+        if (selectedKey !in cardsById) selectedKey = null
     }
     val photoPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -331,13 +325,11 @@ private fun StackedCard(
     onChange: () -> Unit,
     onRestore: () -> Unit,
 ) {
-    var phase by remember(expanded) {
-        mutableStateOf(if (expanded) CardExpansionPhase.Moving else CardExpansionPhase.Stacked)
-    }
+    var arrived by remember(expanded) { mutableStateOf(false) }
     val restoreMotion = rememberCardRestoreMotion(restoring, restorePreviousCard, expanded, onRestoreAnimationFinished)
     val restoreAnimating = restoring || restorePreviousCard != null || restoreMotion.phase != CardRestorePhase.Idle
-    val controlsVisible = phase == CardExpansionPhase.Expanded && !restoreAnimating
-    val restoreButtonVisible = phase == CardExpansionPhase.Expanded && restoreAnimating && restoreMotion.showsPreviousCard
+    val controlsVisible = expanded && arrived && !restoreAnimating
+    val restoreButtonVisible = expanded && arrived && restoreAnimating && restoreMotion.showsPreviousCard
     val expansion =
         animateFloatAsState(
             targetValue = if (controlsVisible) 1f else 0f,
@@ -345,8 +337,8 @@ private fun StackedCard(
             label = "cardControls",
         )
     val bringIntoView = remember { BringIntoViewRequester() }
-    LaunchedEffect(expanded, phase) {
-        if (!expanded || phase != CardExpansionPhase.Expanded) return@LaunchedEffect
+    LaunchedEffect(expanded, arrived) {
+        if (!expanded || !arrived) return@LaunchedEffect
         bringIntoView.bringIntoView()
     }
     val editable = card.face as? CardFace.Editable
@@ -374,7 +366,7 @@ private fun StackedCard(
                 if (restoreMotion.showsPreviousCard) restorePreviousCard ?: card else card,
                 Modifier
                     .animateCardPosition(lookaheadScope) {
-                        if (expanded && phase == CardExpansionPhase.Moving) phase = CardExpansionPhase.Expanded
+                        if (expanded && !arrived) arrived = true
                     }.restoreCardMotion(restoreMotion)
                     .shakeWhileRestoring(restoreMotion.phase == CardRestorePhase.Shaking)
                     .clickable(

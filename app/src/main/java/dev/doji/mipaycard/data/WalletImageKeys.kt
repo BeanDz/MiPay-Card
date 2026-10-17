@@ -15,8 +15,7 @@ internal fun walletImageCandidates(
     url: String,
     model: ImageModel,
 ): List<String> {
-    val source = walletImageSourceIdentity(url, model)
-    val keys = mutableListOf<String>()
+    val source = walletImageSourceIdentity(url, model).toByteArray(Charsets.UTF_8)
     val originalSize =
         ByteBuffer
             .allocate(8)
@@ -26,16 +25,13 @@ internal fun walletImageCandidates(
     // Glide hashes the decoded class before transcoding Bitmap to the requested Drawable.
     val resourceClasses = listOf("android.graphics.drawable.BitmapDrawable", "android.graphics.Bitmap")
     // EmptySignature and the default transformation/options contribute no bytes.
-    for (resourceClass in resourceClasses) {
+    return resourceClasses.map { resourceClass ->
         val digest = MessageDigest.getInstance("SHA-256")
-        digest.update(source.toByteArray(Charsets.UTF_8))
+        digest.update(source)
         digest.update(originalSize)
         digest.update(resourceClass.toByteArray(Charsets.UTF_8))
-        keys.add(BigInteger(1, digest.digest()).toString(16).padStart(64, '0'))
-    }
-    val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
-    keys.add(BigInteger(1, digest).toString(16).padStart(64, '0'))
-    return keys
+        digest.digest().toHexString()
+    } + MessageDigest.getInstance("SHA-256").digest(source).toHexString()
 }
 
 internal fun walletImageSourceIdentity(

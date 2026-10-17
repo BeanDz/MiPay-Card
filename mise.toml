@@ -1,6 +1,5 @@
 [tools]
-"github:asamarts/alint" = "0.18.0"
-java = "temurin-17.0.20+8"
+java = "temurin-27.0.0+35"
 ktlint = "1.8.0"
 
 [tasks.setup]
@@ -22,7 +21,3 @@ run = "ktlint --format 'app/src/**/*.kt' '*.gradle.kts' 'app/*.gradle.kts'"
 [tasks.check]
 description = "Run formatting, Android Lint, and unit tests"
 run = ["ktlint 'app/src/**/*.kt' '*.gradle.kts' 'app/*.gradle.kts'", "./gradlew :app:lintDebug :app:testDebugUnitTest --console=plain"]
-
-[tasks.alint]
-description = "Run repository hygiene checks"
-run = "alint check"

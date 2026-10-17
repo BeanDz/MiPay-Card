@@ -113,7 +113,7 @@ internal fun saveCardImage(
     DigestOutputStream(file.outputStream(), digest).use { output ->
         if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) throw IOException("无法保存新卡面")
     }
-    return digest.digest().toHex()
+    return digest.digest().toHexString()
 }
 
 private fun cardImageBounds(file: File): BitmapFactory.Options {
@@ -129,15 +129,8 @@ private fun cardImageBounds(file: File): BitmapFactory.Options {
 
 internal fun fingerprint(file: File): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().use { input ->
-        val buffer = ByteArray(8192)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            digest.update(buffer, 0, count)
-        }
+    file.forEachBlock(8192) { buffer, count ->
+        digest.update(buffer, 0, count)
     }
-    return digest.digest().toHex()
+    return digest.digest().toHexString()
 }
-
-private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

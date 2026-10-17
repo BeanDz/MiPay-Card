@@ -11,4 +11,4 @@ artifacts/
 *.keystore
 keystore.properties
 .DS_Store
-.alint/cache/
+.lody/

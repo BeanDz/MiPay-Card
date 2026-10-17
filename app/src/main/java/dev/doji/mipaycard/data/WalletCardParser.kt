@@ -139,7 +139,7 @@ private fun parseWalletCard(
 
         val aid = optionalString(json, "aid")
         if (aid.isBlank()) return null
-        val name = cardName(type, json, kind)
+        val name = displayName(type, kind) { key -> optionalString(json, key) }
         if (name.isBlank()) throw JSONException("Missing card name")
         val art =
             when (kind) {
@@ -240,12 +240,6 @@ private fun validBankArt(value: String): String {
     return value
 }
 
-private fun cardName(
-    type: String,
-    json: JSONObject,
-    kind: CardKind,
-): String = displayName(type, kind) { key -> optionalString(json, key) }
-
 private fun displayName(
     type: String,
     kind: CardKind,
@@ -255,19 +249,19 @@ private fun displayName(
         val specificNames = listOf(field("bank_name"), field("bank_card_product_name")).filter(String::isNotBlank).distinct()
         return specificNames.joinToString(" · ").ifBlank { field("title") }
     }
-    return firstString(cardNameFields(type, kind), field)
-}
-
-private fun cardNameFields(
-    type: String,
-    kind: CardKind,
-): List<String> =
-    when {
-        type == "ICCOADIGITALKEY" -> listOf("customName", "friendlyName", "title")
-        kind == CardKind.CarKey -> listOf("name", "title")
-        kind == CardKind.Door -> listOf("door_card_product_name", "title")
-        else -> listOf("title", "cardName")
+    val fields =
+        when {
+            type == "ICCOADIGITALKEY" -> listOf("customName", "friendlyName", "title")
+            kind == CardKind.CarKey -> listOf("name", "title")
+            kind == CardKind.Door -> listOf("door_card_product_name", "title")
+            else -> listOf("title", "cardName")
+        }
+    for (key in fields) {
+        val value = field(key)
+        if (value.isNotBlank()) return value
     }
+    return ""
+}
 
 private fun malformedCard(
     type: String,
@@ -300,19 +294,7 @@ private fun cardIdentifier(
 private fun cardId(
     type: String,
     identifier: String,
-): String =
-    MessageDigest.getInstance("SHA-256").digest("$type\u0000$identifier".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-
-private fun firstString(
-    keys: List<String>,
-    field: (String) -> String,
-): String {
-    for (key in keys) {
-        val value = field(key)
-        if (value.isNotBlank()) return value
-    }
-    return ""
-}
+): String = MessageDigest.getInstance("SHA-256").digest("$type\u0000$identifier".toByteArray(Charsets.UTF_8)).toHexString()
 
 private fun optionalString(
     json: JSONObject,

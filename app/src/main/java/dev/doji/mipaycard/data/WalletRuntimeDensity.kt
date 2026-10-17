@@ -29,14 +29,14 @@ internal fun reconcileWalletDensity(
 
 /** Read the wallet's actual resource density without depending on activity class names. */
 internal fun walletDensityObservation(lines: List<String>): WalletDensityObservation {
-    val densities = mutableSetOf<Int>()
+    var density: Int? = null
     var walletActivity = false
     var foundResourceConfiguration = false
     for (line in lines) {
         if (line.trimStart().startsWith("ACTIVITY ")) {
             if (walletActivity && !foundResourceConfiguration) return WalletDensityObservation.Invalid
             val component = line.trimStart().substringAfter("ACTIVITY ").substringBefore(' ')
-            walletActivity = component.substringBefore('/') == "com.miui.tsmclient" && component.substringAfter('/', "").isNotBlank()
+            walletActivity = component.substringBefore('/') == WALLET_PACKAGE && component.substringAfter('/', "").isNotBlank()
             foundResourceConfiguration = false
         }
         if (!walletActivity || !line.trimStart().startsWith("mLastConfigurationFromResources=")) continue
@@ -48,16 +48,16 @@ internal fun walletDensityObservation(lines: List<String>): WalletDensityObserva
                 ?.toIntOrNull() ?: return WalletDensityObservation.Invalid
         foundResourceConfiguration = true
         if (display != 0) continue
-        val density =
+        val observedDensity =
             Regex("\\b([1-9][0-9]*)dpi\\b")
                 .find(line)
                 ?.groupValues
                 ?.get(1)
                 ?.toIntOrNull() ?: return WalletDensityObservation.Invalid
-        densities.add(density)
+        if (density != null && density != observedDensity) return WalletDensityObservation.Invalid
+        density = observedDensity
     }
     if (walletActivity && !foundResourceConfiguration) return WalletDensityObservation.Invalid
-    if (densities.isEmpty()) return WalletDensityObservation.Missing
-    val density = densities.singleOrNull() ?: return WalletDensityObservation.Invalid
+    if (density == null) return WalletDensityObservation.Missing
     return WalletDensityObservation.Verified(density)
 }

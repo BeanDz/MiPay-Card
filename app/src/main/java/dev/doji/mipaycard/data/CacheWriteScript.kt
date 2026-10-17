@@ -91,27 +91,28 @@ internal fun cacheWriteScript(
         previous=${'$'}(readlink -f "${'$'}previous") || exit 41
         test "${'$'}source" != "${'$'}target" && test "${'$'}previous" != "${'$'}target" || exit 41
         cmp -s "${'$'}previous" "${'$'}target" || exit 42
-        am force-stop com.miui.tsmclient || exit 46
+        am force-stop $WALLET_PACKAGE || exit 46
         validate_target || exit 41
         cmp -s "${'$'}previous" "${'$'}target" || exit 42
         metadata=${'$'}(stat -c '%u:%g:%a:%C:%d:%i:%h' "${'$'}target") || exit 43
         test -n "${'$'}metadata" || exit 43
+        validate_metadata() {
+            actual=${'$'}(stat -c '%u:%g:%a:%C:%d:%i:%h' "${'$'}target") || return 1
+            test "${'$'}actual" = "${'$'}metadata"
+        }
         recover() {
             trap - EXIT HUP INT TERM
             validate_target || exit 45
-            actual=${'$'}(stat -c '%u:%g:%a:%C:%d:%i:%h' "${'$'}target") || exit 45
-            test "${'$'}actual" = "${'$'}metadata" || exit 45
+            validate_metadata || exit 45
             cat "${'$'}previous" > "${'$'}target" || exit 45
             cmp -s "${'$'}previous" "${'$'}target" || exit 45
-            actual=${'$'}(stat -c '%u:%g:%a:%C:%d:%i:%h' "${'$'}target") || exit 45
-            test "${'$'}actual" = "${'$'}metadata" || exit 45
+            validate_metadata || exit 45
             exit 44
         }
         trap recover EXIT HUP INT TERM
         cat "${'$'}source" > "${'$'}target" || exit 44
         cmp -s "${'$'}source" "${'$'}target" || exit 44
         validate_target || exit 44
-        actual=${'$'}(stat -c '%u:%g:%a:%C:%d:%i:%h' "${'$'}target") || exit 44
-        test "${'$'}actual" = "${'$'}metadata" || exit 44
+        validate_metadata || exit 44
         trap - EXIT HUP INT TERM
         """.trimIndent()

@@ -21,7 +21,7 @@ internal class RootWalletFiles(
     fun resourceDensity(): WalletDensityObservation =
         walletDensityObservation(
             command(
-                "dumpsys activity com.miui.tsmclient/ 2>&1",
+                "dumpsys activity $WALLET_PACKAGE/ 2>&1",
                 "无法读取小米智能卡的实际显示密度",
             ),
         )
@@ -29,7 +29,7 @@ internal class RootWalletFiles(
     fun records(): List<WalletRecord> =
         parseWalletProviderRows(
             command(
-                "content query --uri content://com.miui.tsmclient.provider/cache --projection key:value 2>&1",
+                "content query --uri content://$WALLET_PACKAGE.provider/cache --projection key:value 2>&1",
                 "无法读取小米智能卡的卡片记录",
             ),
         )

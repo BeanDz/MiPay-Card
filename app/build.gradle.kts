@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "dev.doji.mipaycard"
     compileSdk = 37
+    buildToolsVersion = "37.0.0"
 
     defaultConfig {
         applicationId = "dev.doji.mipaycard"
@@ -23,7 +24,6 @@ android {
 
     lint {
         warningsAsErrors = true
-        checkDependencies = false
     }
 }
 

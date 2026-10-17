@@ -3,7 +3,6 @@ package dev.doji.mipaycard.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
-import android.util.Size
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -53,7 +52,7 @@ internal class WalletRepository(
             val replacement = File.createTempFile("replacement-", ".png", context.cacheDir)
             try {
                 val replacementFingerprint = saveCardImage(bitmap, replacement)
-                mutate(files, expected, replacement, saveBackup = true)
+                writeImage(files, expected, replacement)
                 CachedImage(expected.key, expected.width, expected.height, replacementFingerprint, bitmap)
             } finally {
                 Files.deleteIfExists(replacement.toPath())
@@ -72,7 +71,7 @@ internal class WalletRepository(
             if (restored.width != expected.width || restored.height != expected.height) {
                 throw IOException("卡面尺寸已变化，请刷新后重试")
             }
-            mutate(files, expected, original, saveBackup = false)
+            writeImage(files, expected, original)
             restored
         }
 
@@ -82,9 +81,7 @@ internal class WalletRepository(
             val files = RootWalletFiles(context.cacheDir, profile.dataDirectory)
             val cards = parseWalletCards(files.records(), profile.useThemeArt, profile.themeLogoType)
             if (cards.isEmpty()) return@withContext emptyList()
-            val bankSize = readBankSize(cards, profile, files)
-
-            val sources = cards.map { card -> swipeImageUrl(card.art, bankSize.width, bankSize.height) }
+            val sources = readImageSources(cards, profile, files)
             val candidates =
                 sources
                     .filterNotNull()
@@ -96,7 +93,7 @@ internal class WalletRepository(
             cards.mapIndexed { index, card ->
                 currentCoroutineContext().ensureActive()
                 val source = sources[index]
-                val problem = card.problem ?: unsupportedArtReason(card.art, source, bankSize.width)
+                val problem = card.problem ?: unsupportedArtReason(card.art, source)
                 val face =
                     if (problem == null) {
                         resolveFace(files, source!!, keys, sharedSources)
@@ -128,14 +125,35 @@ internal class WalletRepository(
         return current?.densityDpi
     }
 
-    private fun readBankSize(
+    private fun readImageSources(
         cards: List<WalletCardInfo>,
         profile: WalletProfile,
         files: RootWalletFiles,
-    ): Size {
-        if (cards.none { it.art is CardArt.BankIdentifier }) return Size(0, 0)
-        val signature = JSONArray(listOf(profile.densitySignature, files.displayResolutionOverride())).toString()
-        return profile.bankImageSize(resolveDensity(files.resourceDensity(), signature))
+    ): List<String?> {
+        val bankSize =
+            if (cards.any { it.art is CardArt.BankIdentifier }) {
+                val signature = JSONArray(listOf(profile.densitySignature, files.displayResolutionOverride())).toString()
+                resolveDensity(files.resourceDensity(), signature)?.let(profile::bankImageSize)
+            } else {
+                null
+            }
+        return cards.map { card ->
+            when (val art = card.art) {
+                is CardArt.Online -> {
+                    art.value
+                }
+
+                is CardArt.BankIdentifier -> {
+                    bankSize?.let { size ->
+                        "https://did-cdn.pay.xiaomi.com/mfc/thumbnail/webp/w${size.width}h${size.height}q80/${art.value}"
+                    }
+                }
+
+                else -> {
+                    null
+                }
+            }
+        }
     }
 
     private fun resolveFace(
@@ -145,55 +163,50 @@ internal class WalletRepository(
         sharedSources: Set<String>,
     ): CardFace {
         val shared = walletImageSourceIdentity(url, ImageModel.CustomUrl) in sharedSources
-        var failure: IOException? = null
-        for (key in walletImageCandidates(url, ImageModel.CustomUrl)) {
-            if (key !in keys) continue
-            val image =
-                try {
-                    readImage(files, key)
-                } catch (error: ImageCacheException) {
-                    failure = error
-                    continue
+        var failure: String? = null
+        for (model in listOf(ImageModel.CustomUrl, ImageModel.PlainUrl)) {
+            for (key in walletImageCandidates(url, model)) {
+                if (key !in keys) continue
+                val image =
+                    readImage(files, key).getOrElse { error ->
+                        failure = error.message ?: "无法解码卡面缓存"
+                        null
+                    } ?: continue
+                if (shared) return CardFace.Unavailable("多张卡共用这张卡面，暂不支持单独更换", image.preview)
+                if (model == ImageModel.PlainUrl) {
+                    return CardFace.Unavailable(
+                        failure ?: "仅匹配到普通 URL 卡面缓存，尚未匹配刷卡页请求；请打开刷卡页面后刷新",
+                        image.preview,
+                    )
                 }
-            if (shared) return CardFace.Unavailable("多张卡共用这张卡面，暂不支持单独更换", image.preview)
-            val original = backupFile(key)
-            try {
-                if (original.exists()) validateCardImage(original, image.width, image.height)
-            } catch (error: IOException) {
-                return CardFace.Unavailable(error.message ?: "原始卡面备份已损坏", image.preview)
-            }
-            return CardFace.Editable(image, original.isFile)
-        }
-
-        var preview: Bitmap? = null
-        for (key in walletImageCandidates(url, ImageModel.PlainUrl)) {
-            if (key !in keys) continue
-            try {
-                preview = readImage(files, key).preview
-                break
-            } catch (error: ImageCacheException) {
-                failure = error
+                val original = backupFile(key)
+                try {
+                    if (original.exists()) validateCardImage(original, image.width, image.height)
+                } catch (error: IOException) {
+                    return CardFace.Unavailable(error.message ?: "原始卡面备份已损坏", image.preview)
+                }
+                return CardFace.Editable(image, original.isFile)
             }
         }
         val reason =
-            when {
-                shared -> "多张卡共用这张卡面，暂不支持单独更换"
-                failure != null -> failure.message ?: "无法解码卡面缓存"
-                preview != null -> "仅匹配到普通 URL 卡面缓存，尚未匹配刷卡页请求；请打开刷卡页面后刷新"
-                else -> "未找到刷卡页卡面缓存，请先打开这张卡的刷卡页面后刷新"
+            if (shared) {
+                "多张卡共用这张卡面，暂不支持单独更换"
+            } else {
+                failure ?: "未找到刷卡页卡面缓存，请先打开这张卡的刷卡页面后刷新"
             }
-        return CardFace.Unavailable(reason, preview)
+        return CardFace.Unavailable(reason)
     }
 
     private fun readImage(
         files: RootWalletFiles,
         key: String,
-    ): CachedImage {
+    ): Result<CachedImage> {
+        // Root failures abort the scan; a corrupt image only disables its own card.
         val current = files.read(key)
-        try {
-            return readCachedImage(key, current)
+        return try {
+            Result.success(readCachedImage(key, current))
         } catch (error: IOException) {
-            throw ImageCacheException(error.message ?: "无法解码卡面缓存", error)
+            Result.failure(error)
         } finally {
             Files.deleteIfExists(current.toPath())
         }
@@ -210,10 +223,9 @@ internal class WalletRepository(
         if (cardIndex < 0) throw IOException("这张卡已不在刷卡列表中，请刷新后重试")
         val card = cards[cardIndex]
         if (card.problem != null) throw IOException(card.problem)
-        val bankSize = readBankSize(cards, profile, files)
-        val sources = cards.map { swipeImageUrl(it.art, bankSize.width, bankSize.height) }
+        val sources = readImageSources(cards, profile, files)
         val source = sources[cardIndex]
-        val problem = unsupportedArtReason(card.art, source, bankSize.width)
+        val problem = unsupportedArtReason(card.art, source)
         if (problem != null) throw IOException(problem)
         val sourceIdentity = walletImageSourceIdentity(source!!, ImageModel.CustomUrl)
         if (sourceIdentity in sharedImageSources(sources)) {
@@ -225,11 +237,10 @@ internal class WalletRepository(
         return files
     }
 
-    private suspend fun mutate(
+    private suspend fun writeImage(
         files: RootWalletFiles,
         image: CachedImage,
         replacement: File,
-        saveBackup: Boolean,
     ) {
         currentCoroutineContext().ensureActive()
         // Once commit starts, cancellation must not separate the write from rollback and cleanup.
@@ -237,7 +248,7 @@ internal class WalletRepository(
             val current = files.read(image.key)
             try {
                 requireFingerprint(image, current)
-                if (saveBackup) saveOriginal(image, current)
+                saveOriginal(image, current)
                 files.write(image.key, replacement, current)
             } finally {
                 Files.deleteIfExists(current.toPath())
@@ -257,9 +268,7 @@ internal class WalletRepository(
         if (!originals.isDirectory && !originals.mkdirs()) throw IOException("无法创建原始卡面备份目录")
         val staging = File.createTempFile("original-", ".cache", originals)
         try {
-            current.inputStream().use { input ->
-                staging.outputStream().use { output -> input.copyTo(output) }
-            }
+            current.copyTo(staging, overwrite = true)
             validateCardImage(staging, image.width, image.height)
             Files.move(staging.toPath(), original.toPath())
         } finally {
@@ -275,11 +284,6 @@ internal class WalletRepository(
     }
 
     private fun backupFile(key: String) = File(originals, "$key.original")
-
-    private class ImageCacheException(
-        message: String,
-        cause: Throwable,
-    ) : IOException(message, cause)
 }
 
 private fun sharedImageSources(sources: List<String?>): Set<String> =
@@ -293,23 +297,11 @@ private fun sharedImageSources(sources: List<String?>): Set<String> =
 private fun unsupportedArtReason(
     art: CardArt,
     source: String?,
-    bankWidth: Int,
 ): String? =
     when {
         art == CardArt.Native -> "刷卡页使用内置卡面，暂不支持更换"
         art == CardArt.Animated -> "刷卡页使用动态卡面，暂不支持更换"
-        art is CardArt.BankIdentifier && bankWidth == 0 -> "尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新"
+        art is CardArt.BankIdentifier && source == null -> "尚未读取小米智能卡的实际显示密度，请先打开智能卡首页或卡片列表后刷新"
         source == null -> "未找到刷卡页的在线卡面地址"
-        else -> null
-    }
-
-internal fun swipeImageUrl(
-    art: CardArt,
-    bankWidth: Int,
-    bankHeight: Int,
-): String? =
-    when (art) {
-        is CardArt.Online -> art.value
-        is CardArt.BankIdentifier -> "https://did-cdn.pay.xiaomi.com/mfc/thumbnail/webp/w${bankWidth}h${bankHeight}q80/${art.value}"
         else -> null
     }

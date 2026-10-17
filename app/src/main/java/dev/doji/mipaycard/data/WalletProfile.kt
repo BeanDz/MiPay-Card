@@ -62,8 +62,7 @@ internal class WalletProfile(
             ).toString()
     }
 
-    fun bankImageSize(densityDpi: Int?): Size {
-        if (densityDpi == null) return Size(0, 0)
+    fun bankImageSize(densityDpi: Int): Size {
         val configuration = Configuration(walletContext.resources.configuration)
         configuration.densityDpi = densityDpi
         val resources = walletContext.createConfigurationContext(configuration).resources

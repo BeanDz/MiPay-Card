@@ -16,7 +16,7 @@ if [[ ! -x "$android_cli" ]]; then
     exit 1
 fi
 
-for package in 'platforms;android-37.0' 'build-tools;36.0.0' 'platform-tools'; do
+for package in 'platforms;android-37.0' 'build-tools;37.0.0' 'platform-tools'; do
     "$android_cli" --sdk="$project_sdk" sdk install "$package" < /dev/null
 done
 print -r -- "sdk.dir=$project_sdk" > local.properties
